@@ -12,7 +12,7 @@ const chickenImageModules = import.meta.glob('./assets/chicken/**/*.{png,jpg,jpe
 const linearFrictionPerSecond = 0.08
 const angularFrictionPerSecond = 0.55
 const saveStorageKey = 'barbequeChickenAlert.save.v1'
-const repoUrl = 'https://github.com/weegeeday/weegeeday'
+const repoUrl = 'https://github.com/weegeeday/BarbequeChickenAlert'
 const bugReportUrl = `${repoUrl}/issues/new`
 
 const isPopupVisible = ref(false)
@@ -79,7 +79,7 @@ const getUpgradeCost = (level) => {
 }
 
 const chickenCount = computed(() => totalChickenCount.value)
-const nextUpgradeGain = computed(() => getUpgradeGain(upgradeLevel.value))
+const nextUpgradeGain = computed(() => getUpgradeGain(upgradeLevel.value + 1))
 const nextUpgradeCost = computed(() => getUpgradeCost(upgradeLevel.value))
 const canAffordUpgrade = computed(() => chickenCount.value >= nextUpgradeCost.value)
 const autoPopupClickUpgradeCost = 1000
