@@ -19,6 +19,7 @@ const isPopupVisible = ref(false)
 const popupCycleKey = ref(0)
 const viewportWidth = ref(window.innerWidth)
 const viewportHeight = ref(window.innerHeight)
+const viewportScale = ref(window.visualViewport?.scale ?? 1)
 const chickens = ref([])
 const areCollisionsEnabled = ref(true)
 const isPerformanceMode = ref(false)
@@ -27,6 +28,7 @@ const chickensPerPopup = ref(1)
 const upgradeLevel = ref(1)
 const hasAutoPopupClickUpgrade = ref(false)
 const isAutoClickerEnabled = ref(true)
+const isSoundEnabled = ref(true)
 const rebirthCount = ref(0)
 const hasChickenBreastUnlock = ref(false)
 const popupSpeedUpgradeLevel = ref(0)
@@ -69,6 +71,14 @@ const chickenImages = [...wingChickenImages, ...chickenBreastImages]
 popupAudio.preload = 'auto'
 chickenAudio.preload = 'auto'
 
+const syncSoundPreference = () => {
+  const muted = !isSoundEnabled.value
+  popupAudio.muted = muted
+  chickenAudio.muted = muted
+}
+
+syncSoundPreference()
+
 const getUpgradeGain = (level) => {
   const baseCpp = Math.floor((level ** 2.5) / 3 + 1 + 1e-9)
   return Math.max(1, Math.floor(baseCpp * rebirthMultiplier.value + 1e-9))
@@ -103,6 +113,7 @@ const cookOutputPerSecond = computed(() => cookCount.value * (1 + rebirthCount.v
 const currentPopupIntervalMs = computed(() => {
   return Math.max(1000, 5000 - popupSpeedUpgradeLevel.value * 50)
 })
+const isCompactHud = computed(() => viewportWidth.value < 520)
 const isPopupSpeedFullyUpgraded = computed(() => currentPopupIntervalMs.value <= 1000)
 const getRebirthLevelRequirement = () => {
   return 45 + rebirthCount.value * 10
@@ -133,7 +144,8 @@ const capSpeed = (value, maxMagnitude) => {
 }
 
 const getChickenSize = () => {
-  const baseSize = Math.min(viewportWidth.value, viewportHeight.value) * 0.12
+  const scaleAdjustedSize = Math.min(viewportWidth.value, viewportHeight.value) * 0.12 * viewportScale.value
+  const baseSize = Math.max(56, scaleAdjustedSize)
   return Math.max(56, Math.min(128, Math.round(baseSize)))
 }
 
@@ -159,8 +171,11 @@ const clampPosition = (chicken) => {
 }
 
 const playPopupAudio = async () => {
+  if (!isSoundEnabled.value) {
+    return
+  }
+
   try {
-    popupAudio.muted = false
     popupAudio.currentTime = 0
     await popupAudio.play()
   } catch (error) {
@@ -169,6 +184,10 @@ const playPopupAudio = async () => {
 }
 
 const playChickenAudio = async () => {
+  if (!isSoundEnabled.value) {
+    return
+  }
+
   try {
     chickenAudio.currentTime = 0
     await chickenAudio.play()
@@ -178,8 +197,11 @@ const playChickenAudio = async () => {
 }
 
 const updateViewport = () => {
-  viewportWidth.value = window.innerWidth
-  viewportHeight.value = window.innerHeight
+  const visualViewport = window.visualViewport
+
+  viewportWidth.value = Math.round(visualViewport?.width ?? window.innerWidth)
+  viewportHeight.value = Math.round(visualViewport?.height ?? window.innerHeight)
+  viewportScale.value = visualViewport?.scale ?? window.devicePixelRatio ?? 1
   chickens.value.forEach((chicken) => {
     clampPosition(chicken)
   })
@@ -366,7 +388,7 @@ const toggleUnlimitedCap = () => {
 
 const createSavePayload = () => {
   return {
-    version: 1,
+    version: 2,
     upgradePricingVersion: 1,
     savedAt: Date.now(),
     totalChickenCount: totalChickenCount.value,
@@ -374,6 +396,7 @@ const createSavePayload = () => {
     upgradeLevel: upgradeLevel.value,
     hasAutoPopupClickUpgrade: hasAutoPopupClickUpgrade.value,
     isAutoClickerEnabled: isAutoClickerEnabled.value,
+    isSoundEnabled: isSoundEnabled.value,
     rebirthCount: rebirthCount.value,
     hasChickenBreastUnlock: hasChickenBreastUnlock.value,
     popupSpeedUpgradeLevel: popupSpeedUpgradeLevel.value,
@@ -490,6 +513,7 @@ const applySavedProgress = (savedState) => {
   upgradeLevel.value = resolvedUpgradeLevel
   hasAutoPopupClickUpgrade.value = Boolean(savedState.hasAutoPopupClickUpgrade)
   isAutoClickerEnabled.value = savedState.isAutoClickerEnabled !== false
+  isSoundEnabled.value = savedState.isSoundEnabled !== false
   rebirthCount.value = normalizePositiveInteger(savedState.rebirthCount, 0, 0)
   hasChickenBreastUnlock.value = Boolean(savedState.hasChickenBreastUnlock)
   popupSpeedUpgradeLevel.value = normalizePositiveInteger(savedState.popupSpeedUpgradeLevel, 0, 0)
@@ -498,6 +522,7 @@ const applySavedProgress = (savedState) => {
   areCollisionsEnabled.value = savedState.areCollisionsEnabled !== false
   isPerformanceMode.value = Boolean(savedState.isPerformanceMode)
 
+  syncSoundPreference()
   enforceChickenCap()
   syncRenderedChickens()
 }
@@ -904,6 +929,12 @@ onMounted(() => {
   window.addEventListener('pointermove', handlePointerMove)
   window.addEventListener('pointerup', handlePointerUp)
   window.addEventListener('pointercancel', handlePointerUp)
+  window.addEventListener('resize', updateViewport)
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', updateViewport)
+    window.visualViewport.addEventListener('scroll', updateViewport)
+  }
 
   animationFrameId = window.requestAnimationFrame(animateChickens)
 })
@@ -921,6 +952,11 @@ onUnmounted(() => {
   window.removeEventListener('pointerup', handlePointerUp)
   window.removeEventListener('pointercancel', handlePointerUp)
 
+  if (window.visualViewport) {
+    window.visualViewport.removeEventListener('resize', updateViewport)
+    window.visualViewport.removeEventListener('scroll', updateViewport)
+  }
+
   popupAudio.pause()
   popupAudio.currentTime = 0
   chickenAudio.pause()
@@ -934,6 +970,7 @@ watch(
     upgradeLevel,
     hasAutoPopupClickUpgrade,
     isAutoClickerEnabled,
+    isSoundEnabled,
     rebirthCount,
     hasChickenBreastUnlock,
     popupSpeedUpgradeLevel,
@@ -958,8 +995,8 @@ watch(totalChickenCount, () => {
 
     <div class="hud">
       <button class="menu-button" type="button" aria-label="Open menu" @click="toggleMenu">☰</button>
-      <button class="shake-button" type="button" @click="shakeChickens">Shake</button>
-      <div class="counter">Chicken: {{ chickenCount }}</div>
+      <button v-if="!isCompactHud" class="shake-button" type="button" @click="shakeChickens">Shake</button>
+      <div v-if="!isCompactHud" class="counter">Chicken: {{ chickenCount }}</div>
     </div>
 
     <div class="save-status">{{ autosaveStatus }}</div>
@@ -967,6 +1004,7 @@ watch(totalChickenCount, () => {
     <div v-if="isMenuOpen" class="menu-panel">
       <div class="menu-title">Upgrades</div>
       <div class="menu-label">Current level: {{ upgradeLevel }}</div>
+
       <button
         type="button"
         class="upgrade-button"
@@ -986,87 +1024,100 @@ watch(totalChickenCount, () => {
         Auto-click popup — Cost: {{ autoPopupClickUpgradeCost }}
       </button>
 
-      <div class="rebirth-panel">
-        <div class="menu-title">Rebirth</div>
-        <div class="menu-label">Multiplier: ×{{ rebirthMultiplier.toFixed(1) }} | Rebirths: {{ rebirthCount }}</div>
+      <div class="menu-bottom-section">
+        <div v-if="isCompactHud" class="menu-compact-actions">
+          <div class="menu-title">Quick actions</div>
+          <div class="menu-label">Chicken: {{ chickenCount }}</div>
+          <button type="button" class="upgrade-button" @click="shakeChickens">Shake</button>
+        </div>
+
+        <button
+          v-if="!hasChickenBreastUnlock"
+          type="button"
+          class="upgrade-button"
+          :disabled="!canAffordChickenBreastUnlock"
+          @click="unlockChickenBreast"
+        >
+          Unlock Chicken Breasts — Cost: {{ chickenBreastUnlockCost }}
+        </button>
+
         <button
           type="button"
-          class="upgrade-button rebirth-button"
-          :disabled="!canAffordRebirth"
-          @click="rebirth"
+          class="upgrade-button"
+          :disabled="!canAffordCook"
+          @click="hireCook"
         >
-          Rebirth at Level {{ nextRebirthLevelRequirement }} (+0.5× gain)
+          Hire Cook ({{ cookCount }}) — {{ cookOutputPerSecond.toFixed(1) }} CPS — Cost: {{ nextCookCost }}
         </button>
-      </div>
 
-      <button
-        v-if="!hasChickenBreastUnlock"
-        type="button"
-        class="upgrade-button"
-        :disabled="!canAffordChickenBreastUnlock"
-        @click="unlockChickenBreast"
-      >
-        Unlock Chicken Breasts — Cost: {{ chickenBreastUnlockCost }}
-      </button>
+        <button
+          v-if="!isPopupSpeedFullyUpgraded"
+          type="button"
+          class="upgrade-button"
+          :disabled="!canAffordPopupSpeedUpgrade"
+          @click="upgradePopupSpeed"
+        >
+          Faster Popups ({{ (currentPopupIntervalMs / 1000).toFixed(2) }}s) — Cost: {{ nextPopupSpeedCost }}
+        </button>
 
-      <button
-        type="button"
-        class="upgrade-button"
-        :disabled="!canAffordCook"
-        @click="hireCook"
-      >
-        Hire Cook ({{ cookCount }}) — {{ cookOutputPerSecond.toFixed(1) }} CPS — Cost: {{ nextCookCost }}
-      </button>
-
-      <button
-        v-if="!isPopupSpeedFullyUpgraded"
-        type="button"
-        class="upgrade-button"
-        :disabled="!canAffordPopupSpeedUpgrade"
-        @click="upgradePopupSpeed"
-      >
-        Faster Popups ({{ (currentPopupIntervalMs / 1000).toFixed(2) }}s) — Cost: {{ nextPopupSpeedCost }}
-      </button>
-
-      <label class="menu-label" for="chicken-cap-input">Rendered chicken cap</label>
-      <input
-        id="chicken-cap-input"
-        v-model.number="chickenCap"
-        class="menu-input"
-        type="number"
-        min="25"
-        max="2000"
-        step="5"
-        @change="applyChickenCap"
-      >
-
-      <label class="menu-toggle">
+        <label class="menu-label" for="chicken-cap-input">Rendered chicken cap</label>
         <input
-          v-model="isUnlimitedCap"
-          type="checkbox"
-          :disabled="isPerformanceMode"
-          @change="toggleUnlimitedCap"
+          id="chicken-cap-input"
+          v-model.number="chickenCap"
+          class="menu-input"
+          type="number"
+          min="25"
+          max="2000"
+          step="5"
+          @change="applyChickenCap"
         >
-        Unlimited cap
-      </label>
 
-      <div class="menu-actions">
-        <button type="button" class="menu-action-button" @click="reportBug">Report bug</button>
-        <button type="button" class="menu-action-button" @click="exportSaveFile">Export save</button>
-        <button type="button" class="menu-action-button" @click="triggerSaveImport">Import save</button>
-        <button type="button" class="menu-action-button danger" @click="confirmAndDeleteSave">
-          Delete save
+        <label class="menu-toggle">
+          <input
+            v-model="isUnlimitedCap"
+            type="checkbox"
+            :disabled="isPerformanceMode"
+            @change="toggleUnlimitedCap"
+          >
+          Unlimited cap
+        </label>
+
+          <label class="menu-toggle">
+            <input v-model="isSoundEnabled" type="checkbox" @change="syncSoundPreference">
+            <span>Sound</span>
+          </label>
+
+          <div class="rebirth-panel">
+            <div class="menu-title">Rebirth</div>
+            <div class="menu-label">Multiplier: ×{{ rebirthMultiplier.toFixed(1) }} | Rebirths: {{ rebirthCount }}</div>
+            <button
+              type="button"
+              class="upgrade-button rebirth-button"
+              :disabled="!canAffordRebirth"
+              @click="rebirth"
+            >
+              Rebirth at Level {{ nextRebirthLevelRequirement }} (+0.5× gain)
+            </button>
+          </div>
+
+        <div class="menu-actions">
+          <button type="button" class="menu-action-button" @click="reportBug">Report bug</button>
+          <button type="button" class="menu-action-button" @click="exportSaveFile">Export save</button>
+          <button type="button" class="menu-action-button" @click="triggerSaveImport">Import save</button>
+          <button type="button" class="menu-action-button danger" @click="confirmAndDeleteSave">
+            Delete save
+          </button>
+        </div>
+
+        <button type="button" class="repo-link" @click="openRepository" aria-label="Open GitHub repository">
+          <svg viewBox="0 0 24 24" class="repo-icon" aria-hidden="true">
+            <path
+              d="M12 2C6.48 2 2 6.59 2 12.25c0 4.52 2.87 8.35 6.84 9.7.5.09.66-.22.66-.49 0-.24-.01-.88-.01-1.73-2.78.62-3.37-1.38-3.37-1.38-.45-1.18-1.11-1.49-1.11-1.49-.9-.64.07-.63.07-.63 1 .07 1.52 1.05 1.52 1.05.88 1.55 2.31 1.1 2.87.84.09-.66.35-1.1.64-1.36-2.22-.26-4.56-1.14-4.56-5.08 0-1.12.39-2.04 1.03-2.76-.1-.26-.45-1.3.1-2.72 0 0 .84-.28 2.75 1.06A9.33 9.33 0 0 1 12 6.98c.85 0 1.7.12 2.5.35 1.9-1.34 2.74-1.06 2.74-1.06.56 1.42.21 2.46.1 2.72.64.72 1.03 1.64 1.03 2.76 0 3.95-2.34 4.81-4.58 5.07.36.32.68.93.68 1.88 0 1.36-.01 2.46-.01 2.79 0 .27.16.59.67.49A10.26 10.26 0 0 0 22 12.25C22 6.59 17.52 2 12 2Z"
+            />
+          </svg>
+          Repository
         </button>
       </div>
-
-      <button type="button" class="repo-link" @click="openRepository" aria-label="Open GitHub repository">
-        <svg viewBox="0 0 24 24" class="repo-icon" aria-hidden="true">
-          <path
-            d="M12 2C6.48 2 2 6.59 2 12.25c0 4.52 2.87 8.35 6.84 9.7.5.09.66-.22.66-.49 0-.24-.01-.88-.01-1.73-2.78.62-3.37-1.38-3.37-1.38-.45-1.18-1.11-1.49-1.11-1.49-.9-.64.07-.63.07-.63 1 .07 1.52 1.05 1.52 1.05.88 1.55 2.31 1.1 2.87.84.09-.66.35-1.1.64-1.36-2.22-.26-4.56-1.14-4.56-5.08 0-1.12.39-2.04 1.03-2.76-.1-.26-.45-1.3.1-2.72 0 0 .84-.28 2.75 1.06A9.33 9.33 0 0 1 12 6.98c.85 0 1.7.12 2.5.35 1.9-1.34 2.74-1.06 2.74-1.06.56 1.42.21 2.46.1 2.72.64.72 1.03 1.64 1.03 2.76 0 3.95-2.34 4.81-4.58 5.07.36.32.68.93.68 1.88 0 1.36-.01 2.46-.01 2.79 0 .27.16.59.67.49A10.26 10.26 0 0 0 22 12.25C22 6.59 17.52 2 12 2Z"
-          />
-        </svg>
-        Repository
-      </button>
     </div>
 
     <div v-if="isPerformanceMode" class="performance-notice">
@@ -1212,6 +1263,15 @@ watch(totalChickenCount, () => {
 .menu-title {
   color: #f1f1f1;
   font-size: 0.85rem;
+}
+
+.menu-compact-actions {
+  border: 1px solid #2f2f2f;
+  background: rgba(17, 17, 17, 0.96);
+  border-radius: 0.8rem;
+  padding: 0.7rem;
+  display: grid;
+  gap: 0.45rem;
 }
 
 .menu-label {
