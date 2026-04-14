@@ -56,6 +56,8 @@ let smoothedFps = 60
 let cookProductionCarry = 0
 let totalChickenEarned = 0
 let sessionStartTimestamp = performance.now()
+let touchStartHandler = null
+let gestureStartHandler = null
 
 const popupAudio = new Audio(soundFile)
 const chickenAudio = new Audio(sound2File)
@@ -936,6 +938,23 @@ onMounted(() => {
     window.visualViewport.addEventListener('scroll', updateViewport)
   }
 
+  // Prevent double-tap zoom on iOS
+  touchStartHandler = (e) => {
+    const now = Date.now()
+    if (now - (touchStartHandler.lastTouchTime || 0) < 300 && e.touches.length === 1) {
+      e.preventDefault()
+    }
+    touchStartHandler.lastTouchTime = now
+  }
+
+  // Prevent pinch zoom
+  gestureStartHandler = (e) => {
+    e.preventDefault()
+  }
+
+  document.addEventListener('touchstart', touchStartHandler, { passive: false })
+  document.addEventListener('gesturestart', gestureStartHandler, { passive: false })
+
   animationFrameId = window.requestAnimationFrame(animateChickens)
 })
 
@@ -955,6 +974,13 @@ onUnmounted(() => {
   if (window.visualViewport) {
     window.visualViewport.removeEventListener('resize', updateViewport)
     window.visualViewport.removeEventListener('scroll', updateViewport)
+  }
+
+  if (touchStartHandler) {
+    document.removeEventListener('touchstart', touchStartHandler)
+  }
+  if (gestureStartHandler) {
+    document.removeEventListener('gesturestart', gestureStartHandler)
   }
 
   popupAudio.pause()
@@ -990,7 +1016,7 @@ watch(totalChickenCount, () => {
 </script>
 
 <template>
-  <div class="black-screen">
+  <div class="black-screen" style="touch-action: none; user-select: none;">
     <div v-if="!isCompactHud" class="fps-hud">FPS: {{ fpsCounter }} | Avg CPS: {{ averageCps.toFixed(1) }}</div>
 
     <div class="hud">
