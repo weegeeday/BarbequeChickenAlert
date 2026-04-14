@@ -991,15 +991,15 @@ watch(totalChickenCount, () => {
 
 <template>
   <div class="black-screen">
-    <div class="fps-hud">FPS: {{ fpsCounter }} | Avg CPS: {{ averageCps.toFixed(1) }}</div>
+    <div v-if="!isCompactHud" class="fps-hud">FPS: {{ fpsCounter }} | Avg CPS: {{ averageCps.toFixed(1) }}</div>
 
     <div class="hud">
       <button class="menu-button" type="button" aria-label="Open menu" @click="toggleMenu">☰</button>
-      <button v-if="!isCompactHud" class="shake-button" type="button" @click="shakeChickens">Shake</button>
-      <div v-if="!isCompactHud" class="counter">Chicken: {{ chickenCount }}</div>
+      <button class="shake-button" type="button" @click="shakeChickens">Shake</button>
+      <div class="counter">Chicken: {{ chickenCount }}</div>
     </div>
 
-    <div class="save-status">{{ autosaveStatus }}</div>
+    <div v-if="!isCompactHud" class="save-status">{{ autosaveStatus }}</div>
 
     <div v-if="isMenuOpen" class="menu-panel">
       <div class="menu-title">Upgrades</div>
@@ -1025,12 +1025,6 @@ watch(totalChickenCount, () => {
       </button>
 
       <div class="menu-bottom-section">
-        <div v-if="isCompactHud" class="menu-compact-actions">
-          <div class="menu-title">Quick actions</div>
-          <div class="menu-label">Chicken: {{ chickenCount }}</div>
-          <button type="button" class="upgrade-button" @click="shakeChickens">Shake</button>
-        </div>
-
         <button
           v-if="!hasChickenBreastUnlock"
           type="button"
