@@ -22,6 +22,16 @@ const router = createRouter({
       path: '/corndog',
       name: 'corndog',
       component: () => import('../views/Corndog.vue'),
+    },
+    {
+      path: '/moai',
+      name: 'moai',
+      component: () => import('../views/Moai.vue'),
+    },
+    {
+      path: '/custom',
+      name: 'custom',
+      component: () => import('../views/Custom.vue'),
     }
   ],
 })

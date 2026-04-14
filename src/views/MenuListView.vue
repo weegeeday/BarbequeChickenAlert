@@ -1,8 +1,10 @@
 <script setup>
 const urls = [
-  ['/', 'Home'],
+  ['/', 'Barbecue Chicken Alert'],
   ['/menu', 'Menu'],
   ['/corndog', 'Corndogcat edition'],
+  ['/moai', 'Moai edition'],
+  ['/custom', 'Custom edition']
 ]
 </script>
 
