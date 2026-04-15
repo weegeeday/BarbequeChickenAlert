@@ -1773,6 +1773,8 @@ watch(totalChickenCount, () => {
   padding: 0.75rem;
   display: grid;
   gap: 0.55rem;
+  max-height: 65vh;
+  overflow-y: auto;
 }
 
 .left-menu-panel {
