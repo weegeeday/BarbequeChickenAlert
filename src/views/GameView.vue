@@ -34,6 +34,13 @@ const hasAutoPopupClickUpgrade = ref(false)
 const isAutoClickerEnabled = ref(true)
 const isSoundEnabled = ref(true)
 const rebirthCount = ref(0)
+const rebirthChickens = ref(0)
+// Permanent rebirth upgrades
+const rebirthUpgrades = ref({
+  startWithChickens: false, // Start with 0.05% of previous chickens
+  extraMultiplier: 0,      // Additional multiplier
+  earlyChickenUpgrade: false // Upgrade all chickens early
+})
 const hasChickenBreastUnlock = ref(false)
 const hasBankUnlock = ref(false)
 const bankChickenStored = ref(0)
@@ -52,6 +59,7 @@ const autosaveStatus = ref('Autosave: On')
 const pendingSavedState = ref(null)
 const saveImportInput = ref(null)
 const activeConfirmPrompt = ref(null)
+const deleteSaveConfirmationText = ref('')
 const bankDepositAmount = ref(0)
 const bankWithdrawAmount = ref(0)
 const floatingNumbers = ref([])
@@ -132,7 +140,7 @@ const getCookCost = (level) => {
 const getFactoryCost = (level) => {
   return Math.max(factoryUnlockCost, Math.floor(1.5 * (level ** 3) + 1 + 1e-9))
 }
-const rebirthMultiplier = computed(() => 1 + 0.5 * rebirthCount.value)
+const rebirthMultiplier = computed(() => 1 + 0.5 * rebirthCount.value + rebirthUpgrades.value.extraMultiplier)
 const canAffordChickenBreastUnlock = computed(() => {
   return !hasChickenBreastUnlock.value && chickenCount.value >= chickenBreastUnlockCost
 })
@@ -143,7 +151,8 @@ const canAffordFactoryUnlock = computed(() => {
   return !hasFactoryUnlock.value && chickenCount.value >= factoryUnlockCost
 })
 const canOpenLeftMenu = computed(() => rebirthCount.value > 0 || hasBankUnlock.value)
-const bankCpsGeneration = computed(() => bankChickenStored.value * 0.75 * 0.01)
+const bankEfficiencyPercent = ref(35)
+const bankCpsGeneration = computed(() => bankChickenStored.value * (bankEfficiencyPercent.value / 100) * 0.01)
 const factoryCpsGeneration = computed(() => factoryCount.value * 1.5 * rebirthMultiplier.value)
 const nextPopupSpeedCost = computed(() => getPopupSpeedUpgradeCost(popupSpeedUpgradeLevel.value + 1))
 const canAffordPopupSpeedUpgrade = computed(() => chickenCount.value >= nextPopupSpeedCost.value)
@@ -194,7 +203,7 @@ const normalizeCapValue = (value) => {
   return Math.max(25, Math.min(2000, Math.round(safeValue)))
 }
 
-const normalizePositiveInteger = (value, fallback = 1, minimum = 1, maximum = 1000000) => {
+const normalizePositiveInteger = (value, fallback = 1, minimum = 1, maximum = Number.MAX_SAFE_INTEGER) => {
   const safeValue = Number.isFinite(value) ? value : fallback
   return Math.max(minimum, Math.min(maximum, Math.round(safeValue)))
 }
@@ -371,9 +380,10 @@ const handlePopupClick = () => {
   void playChickenAudio()
 
   const requested = chickensPerPopup.value * (isRarePopupActive.value ? rarePopupMultiplier : 1)
+  const total = Math.floor(requested * rebirthMultiplier.value)
 
-  if (requested > 0) {
-    addChicken(requested)
+  if (total > 0) {
+    addChicken(total)
   }
 
   isRarePopupActive.value = false
@@ -423,79 +433,127 @@ const upgradeAutoPopupClick = () => {
   syncRenderedChickens()
 }
 
-const rebirth = () => {
-  if (!canAffordRebirth.value) {
+const rebirthUpgradeOptions = [
+  { key: 'none', label: 'Do nothing (free)' },
+  { key: 'mult', label: '+0.5× Multiplier' },
+  { key: 'startWithChickens', label: 'Start with 0.05% of previous chickens' },
+  { key: 'earlyChickenUpgrade', label: 'Upgrade all chickens early' },
+]
+
+const getBaseRebirthUpgradeCost = (key) => {
+  if (key === 'mult') {
+    return 1 + rebirthCount.value * 2
+  }
+
+  if (key === 'startWithChickens') {
+    return 100
+  }
+
+  if (key === 'earlyChickenUpgrade') {
+    return 30
+  }
+
+  return 0
+}
+
+const getEffectiveRebirthUpgradeCost = (key) => {
+  if (key === 'startWithChickens' && rebirthUpgrades.value.startWithChickens) {
+    return 0
+  }
+
+  if (key === 'earlyChickenUpgrade' && rebirthUpgrades.value.earlyChickenUpgrade) {
+    return 0
+  }
+
+  return getBaseRebirthUpgradeCost(key)
+}
+
+const selectedRebirthUpgradeCost = computed(() => getEffectiveRebirthUpgradeCost(rebirthMenu.value.selected))
+const projectedRebirthRcBalance = computed(() => {
+  return rebirthChickens.value + rebirthMenu.value.pendingRC - selectedRebirthUpgradeCost.value
+})
+
+const rebirthMenu = ref({ visible: false, selected: 'none', error: '', pendingRC: 0 })
+
+const openRebirthMenu = () => {
+  if (!canAffordRebirth.value) return
+  const chickensForRebirth = Math.floor(totalChickenCount.value * 0.5)
+  const gainedRebirthChickens = Math.floor(chickensForRebirth * 0.0001)
+  rebirthMenu.value = { visible: true, selected: 'none', error: '', pendingRC: gainedRebirthChickens }
+}
+
+const cancelRebirthMenu = () => {
+  rebirthMenu.value.visible = false
+  rebirthMenu.value.selected = 'none'
+  rebirthMenu.value.error = ''
+  rebirthMenu.value.pendingRC = 0
+}
+
+const confirmRebirthMenu = () => {
+  if (!canAffordRebirth.value) return
+  const chickensForRebirth = Math.floor(totalChickenCount.value * 0.5)
+  const gainedRebirthChickens = Math.floor(chickensForRebirth * 0.0001)
+  let availableRC = rebirthChickens.value + gainedRebirthChickens
+
+  let startingChickens = 0
+  let upgradeLevelOverride = 1
+  let chickensPerPopupOverride = 1
+
+  // Handle upgrade selection
+  const sel = rebirthMenu.value.selected
+  const selectedCost = getEffectiveRebirthUpgradeCost(sel)
+
+  if (selectedCost > availableRC) {
+    if (sel === 'mult') {
+      rebirthMenu.value.error = 'Not enough RC for multiplier upgrade.'
+    } else if (sel === 'startWithChickens') {
+      rebirthMenu.value.error = 'Not enough RC for start with chickens.'
+    } else if (sel === 'earlyChickenUpgrade') {
+      rebirthMenu.value.error = 'Not enough RC for early chicken upgrade.'
+    }
+
     return
   }
 
+  if (sel === 'mult') {
+    availableRC -= selectedCost
+    rebirthUpgrades.value.extraMultiplier += 0.5
+  } else if (sel === 'startWithChickens' && !rebirthUpgrades.value.startWithChickens) {
+    availableRC -= selectedCost
+    rebirthUpgrades.value.startWithChickens = true
+  } else if (sel === 'earlyChickenUpgrade' && !rebirthUpgrades.value.earlyChickenUpgrade) {
+    availableRC -= selectedCost
+    rebirthUpgrades.value.earlyChickenUpgrade = true
+  }
+
+  if (rebirthUpgrades.value.startWithChickens) {
+    startingChickens = Math.floor(chickensForRebirth * 0.0005)
+  }
+
+  if (rebirthUpgrades.value.earlyChickenUpgrade) {
+    upgradeLevelOverride = 2
+    chickensPerPopupOverride = getUpgradeGain(2)
+  }
+
+  rebirthChickens.value = availableRC
   rebirthCount.value += 1
-  totalChickenCount.value = 0
-  chickensPerPopup.value = 1
-  upgradeLevel.value = 1
+  totalChickenCount.value = startingChickens
+  chickensPerPopup.value = chickensPerPopupOverride
+  upgradeLevel.value = upgradeLevelOverride
   hasAutoPopupClickUpgrade.value = false
-  hasChickenBreastUnlock.value = false
+  hasChickenBreastUnlock.value = rebirthUpgrades.value.earlyChickenUpgrade
   hasBankUnlock.value = false
   bankChickenStored.value = 0
-  hasFactoryUnlock.value = false
+  hasFactoryUnlock.value = rebirthUpgrades.value.earlyChickenUpgrade
   factoryCount.value = 0
   popupSpeedUpgradeLevel.value = 0
   cookCount.value = 0
   rainbowCycleHue = 0
+  rebirthMenu.value.visible = false
   syncRenderedChickens()
 }
 
-const unlockChickenBreast = () => {
-  if (!canAffordChickenBreastUnlock.value) {
-    return
-  }
-
-  totalChickenCount.value -= chickenBreastUnlockCost
-  hasChickenBreastUnlock.value = true
-  syncRenderedChickens()
-}
-
-const upgradePopupSpeed = () => {
-  if (!canAffordPopupSpeedUpgrade.value) {
-    return
-  }
-
-  totalChickenCount.value -= nextPopupSpeedCost.value
-  popupSpeedUpgradeLevel.value += 1
-  syncRenderedChickens()
-}
-
-const hireCook = () => {
-  if (!canAffordCook.value) {
-    return
-  }
-
-  totalChickenCount.value -= nextCookCost.value
-  cookCount.value += 1
-  syncRenderedChickens()
-}
-
-const unlockBank = () => {
-  if (!canAffordBankUnlock.value) {
-    return
-  }
-
-  totalChickenCount.value -= bankUnlockCost
-  hasBankUnlock.value = true
-  shouldFlashLeftMenu.value = true
-  syncRenderedChickens()
-}
-
-const depositToBank = (amount) => {
-  const depositAmount = Math.min(amount, totalChickenCount.value)
-  if (depositAmount <= 0) {
-    return
-  }
-
-  totalChickenCount.value -= depositAmount
-  bankChickenStored.value += depositAmount
-  syncRenderedChickens()
-}
-
+// Duplicate removed
 const withdrawFromBank = (amount) => {
   const withdrawAmount = Math.min(amount, bankChickenStored.value)
   if (withdrawAmount <= 0) {
@@ -568,6 +626,8 @@ const createSavePayload = () => {
     isAutoClickerEnabled: isAutoClickerEnabled.value,
     isSoundEnabled: isSoundEnabled.value,
     rebirthCount: rebirthCount.value,
+    rebirthChickens: rebirthChickens.value,
+    rebirthUpgrades: { ...rebirthUpgrades.value },
     hasChickenBreastUnlock: hasChickenBreastUnlock.value,
     popupSpeedUpgradeLevel: popupSpeedUpgradeLevel.value,
     cookCount: cookCount.value,
@@ -580,6 +640,7 @@ const createSavePayload = () => {
     factoryCount: factoryCount.value,
     chickenHueShift: chickenHueShift.value,
     rainbowCycleEnabled: rainbowCycleEnabled.value,
+    bankEfficiencyPercent: bankEfficiencyPercent.value,
   }
 }
 
@@ -596,23 +657,37 @@ const writeAutosave = () => {
   }
 }
 
+const resetRebirthUnlocks = () => {
+  rebirthUpgrades.value = {
+    startWithChickens: false,
+    extraMultiplier: 0,
+    earlyChickenUpgrade: false,
+  }
+}
+
 const removeSavedProgress = () => {
   try {
     window.localStorage.removeItem(saveStorageKey)
   } catch (error) {
     void error
   }
+
+  resetRebirthUnlocks()
 }
 
 const openDeleteSavePrompt = () => {
+  deleteSaveConfirmationText.value = ''
   activeConfirmPrompt.value = {
     title: 'Delete save',
-    message: 'Delete saved progress from this device?',
+    message: 'Type "yes im sure to delete" to confirm.',
     confirmLabel: 'Delete save',
     cancelLabel: 'Cancel',
+    requiresTypedConfirmation: true,
+    requiredTypedValue: 'yes im sure to delete',
     onConfirm: () => {
       removeSavedProgress()
       autosaveStatus.value = sessionSavingEnabled.value ? 'Autosave: On' : 'Autosave: Off (session)'
+      window.location.reload()
     },
   }
 }
@@ -668,6 +743,7 @@ const handleSaveImportSelection = async (event) => {
     }
 
     applySavedProgress(parsedSave)
+    resetRebirthUnlocks()
     sessionSavingEnabled.value = true
     autosaveStatus.value = 'Autosave: On'
     writeAutosave()
@@ -691,6 +767,15 @@ const applySavedProgress = (savedState) => {
   isAutoClickerEnabled.value = savedState.isAutoClickerEnabled !== false
   isSoundEnabled.value = savedState.isSoundEnabled !== false
   rebirthCount.value = normalizePositiveInteger(savedState.rebirthCount, 0, 0)
+  rebirthChickens.value = normalizePositiveInteger(savedState.rebirthChickens, 0, 0)
+  resetRebirthUnlocks()
+  if (savedState.rebirthUpgrades) {
+    rebirthUpgrades.value = {
+      startWithChickens: !!savedState.rebirthUpgrades.startWithChickens,
+      extraMultiplier: Number(savedState.rebirthUpgrades.extraMultiplier) || 0,
+      earlyChickenUpgrade: !!savedState.rebirthUpgrades.earlyChickenUpgrade,
+    }
+  }
   hasChickenBreastUnlock.value = Boolean(savedState.hasChickenBreastUnlock)
   popupSpeedUpgradeLevel.value = normalizePositiveInteger(savedState.popupSpeedUpgradeLevel, 0, 0)
   cookCount.value = normalizePositiveInteger(savedState.cookCount, 0, 0)
@@ -703,6 +788,12 @@ const applySavedProgress = (savedState) => {
   factoryCount.value = normalizePositiveInteger(savedState.factoryCount, 0, 0)
   chickenHueShift.value = normalizePositiveInteger(savedState.chickenHueShift, 0, 0, 360)
   rainbowCycleEnabled.value = Boolean(savedState.rainbowCycleEnabled)
+  // Restore bank efficiency percent if present, else default to 35 + cookCount (capped at 90)
+  if (typeof savedState.bankEfficiencyPercent === 'number') {
+    bankEfficiencyPercent.value = Math.min(90, Math.max(35, savedState.bankEfficiencyPercent))
+  } else {
+    bankEfficiencyPercent.value = Math.min(90, 35 + cookCount.value)
+  }
 
   syncSoundPreference()
   enforceChickenCap()
@@ -721,14 +812,6 @@ const handleLoadSavedProgress = () => {
   writeAutosave()
 }
 
-const handleDeleteSavedProgress = () => {
-  removeSavedProgress()
-  sessionSavingEnabled.value = true
-  autosaveStatus.value = 'Autosave: On'
-  showSavePrompt.value = false
-  pendingSavedState.value = null
-}
-
 const handleKeepWithoutLoad = () => {
   sessionSavingEnabled.value = false
   autosaveStatus.value = 'Autosave: Off (session)'
@@ -738,12 +821,19 @@ const handleKeepWithoutLoad = () => {
 
 const closeConfirmPrompt = () => {
   activeConfirmPrompt.value = null
+  deleteSaveConfirmationText.value = ''
 }
 
 const confirmActivePrompt = () => {
   const prompt = activeConfirmPrompt.value
   if (!prompt) {
     return
+  }
+
+  if (prompt.requiresTypedConfirmation) {
+    if (deleteSaveConfirmationText.value !== prompt.requiredTypedValue) {
+      return
+    }
   }
 
   closeConfirmPrompt()
@@ -1373,7 +1463,6 @@ watch(totalChickenCount, () => {
           <input
             v-model="isUnlimitedCap"
             type="checkbox"
-            :disabled="isPerformanceMode"
             @change="toggleUnlimitedCap"
           >
           Unlimited cap
@@ -1391,10 +1480,37 @@ watch(totalChickenCount, () => {
               type="button"
               class="upgrade-button rebirth-button"
               :disabled="!canAffordRebirth"
-              @click="rebirth"
+              @click="openRebirthMenu"
             >
               Rebirth at Level {{ nextRebirthLevelRequirement }} (+0.5× gain)
             </button>
+
+            <div v-if="rebirthMenu.visible" class="rebirth-overlay">
+              <div class="save-dialog">
+                <div class="save-title">Rebirth Options</div>
+                <div class="save-text">You will gain {{ Math.floor(totalChickenCount * 0.5 * 0.0001) }} RC (Rebirth Chickens).</div>
+                <div class="save-text">Choose a permanent upgrade to unlock (costs RC):</div>
+                <div class="rebirth-upgrade-list" style="display: flex; flex-direction: column; gap: 0.5em;">
+                  <label v-for="opt in rebirthUpgradeOptions" :key="opt.key" class="rebirth-upgrade-option" style="display: flex; align-items: center; gap: 0.5em;">
+                    <input type="radio" v-model="rebirthMenu.selected" :value="opt.key">
+                    <span>
+                      {{ opt.label }}
+                      <span v-if="opt.key === 'mult'"> (costs {{ getBaseRebirthUpgradeCost('mult') }} RC)</span>
+                      <span v-else-if="opt.key === 'startWithChickens'"> (costs {{ getEffectiveRebirthUpgradeCost('startWithChickens') }} RC)</span>
+                      <span v-else-if="opt.key === 'earlyChickenUpgrade'"> (costs {{ getEffectiveRebirthUpgradeCost('earlyChickenUpgrade') }} RC)</span>
+                      <span v-if="opt.key === 'startWithChickens' && rebirthUpgrades.startWithChickens"> (Unlocked)</span>
+                      <span v-if="opt.key === 'earlyChickenUpgrade' && rebirthUpgrades.earlyChickenUpgrade"> (Unlocked)</span>
+                    </span>
+                  </label>
+                </div>
+                <div class="save-text" style="color: #e55; min-height: 1.5em;">{{ rebirthMenu.error }}</div>
+                <div class="prompt-actions">
+                  <button type="button" class="save-button" @click="confirmRebirthMenu">Confirm</button>
+                  <button type="button" class="save-button" @click="cancelRebirthMenu">Cancel</button>
+                </div>
+                <div class="save-text">RC after rebirth: {{ projectedRebirthRcBalance }}</div>
+              </div>
+            </div>
           </div>
 
         <div class="menu-actions">
@@ -1487,7 +1603,6 @@ watch(totalChickenCount, () => {
         <div class="save-title">Saved progress found</div>
         <div class="save-text">Choose how to start this session:</div>
         <button type="button" class="save-button" @click="handleLoadSavedProgress">Load save</button>
-        <button type="button" class="save-button" @click="handleDeleteSavedProgress">Delete save</button>
         <button type="button" class="save-button" @click="handleKeepWithoutLoad">
           Keep save, do not load (disable saving this session)
         </button>
@@ -1498,8 +1613,23 @@ watch(totalChickenCount, () => {
       <div class="save-dialog">
         <div class="save-title">{{ activeConfirmPrompt.title }}</div>
         <div class="save-text">{{ activeConfirmPrompt.message }}</div>
+        <input
+          v-if="activeConfirmPrompt.requiresTypedConfirmation"
+          v-model="deleteSaveConfirmationText"
+          class="menu-input"
+          type="text"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          placeholder="yes im sure to delete"
+        >
         <div class="prompt-actions">
-          <button type="button" class="save-button" @click="confirmActivePrompt">
+          <button
+            type="button"
+            class="save-button"
+            :disabled="activeConfirmPrompt.requiresTypedConfirmation && deleteSaveConfirmationText !== activeConfirmPrompt.requiredTypedValue"
+            @click="confirmActivePrompt"
+          >
             {{ activeConfirmPrompt.confirmLabel || 'Confirm' }}
           </button>
           <button type="button" class="save-button" @click="cancelActivePrompt">
@@ -1872,6 +2002,19 @@ watch(totalChickenCount, () => {
   display: grid;
   place-items: center;
   padding: 1rem;
+}
+
+.rebirth-overlay {
+  position: relative;
+  z-index: auto;
+  background: transparent;
+  display: block;
+  padding: 0;
+  margin-top: 0.4rem;
+}
+
+.rebirth-overlay .save-dialog {
+  width: 100%;
 }
 
 .save-dialog {
