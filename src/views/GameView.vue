@@ -154,7 +154,7 @@ const canAffordFactoryUnlock = computed(() => {
 const canOpenLeftMenu = computed(() => rebirthCount.value > 0 || hasBankUnlock.value)
 const bankEfficiencyPercent = ref(35)
 const bankCpsGeneration = computed(() => bankChickenStored.value * (bankEfficiencyPercent.value / 100) * 0.01)
-const factoryCpsGeneration = computed(() => factoryCount.value * 1.5 * rebirthMultiplier.value)
+const factoryCpsGeneration = computed(() => factoryCount.value * 2 * rebirthMultiplier.value)
 const nextPopupSpeedCost = computed(() => getPopupSpeedUpgradeCost(popupSpeedUpgradeLevel.value + 1))
 const canAffordPopupSpeedUpgrade = computed(() => chickenCount.value >= nextPopupSpeedCost.value)
 const nextCookCost = computed(() => getCookCost(cookCount.value + 1))
@@ -1202,12 +1202,9 @@ const animateChickens = (timestamp) => {
 
       if (stableFpsDurationMs >= 30000) {
         isPerformanceMode.value = false
+        areCollisionsEnabled.value = true
         lowFpsDurationMs = 0
         stableFpsDurationMs = 0
-      }
-
-      if (chickens.value.length <= 50) {
-        areCollisionsEnabled.value = true
       }
     }
   }
@@ -1423,7 +1420,7 @@ watch(totalChickenCount, () => {
           <div class="save-text"><strong>Chicken click values:</strong> Wing = 1 chicken/click, Breast = 2 chickens/click.</div>
           <div class="save-text"><strong>Chicken per popup upgrade:</strong> CPP gain scales by formula and is multiplied by rebirth multiplier.</div>
           <div class="save-text"><strong>Auto-click popup:</strong> Instantly clicks each popup once (same reward as manual click).</div>
-          <div class="save-text"><strong>Factory:</strong> Each factory generates 1.5 × rebirthMultiplier chickens/s.</div>
+          <div class="save-text"><strong>Factory:</strong> Each factory generates 2 × rebirthMultiplier chickens/s.</div>
           <div class="save-text"><strong>Cook:</strong> Each cook generates (1 + rebirthCount) chickens/s and +1% bank efficiency (cap 90%).</div>
           <div class="save-text"><strong>Bank:</strong> CPS = stored × bankEfficiency × 0.01; stored amount decays 1% per minute.</div>
           <div class="save-text"><strong>Rendered cap:</strong> Manual cap range is 25 to 2000 chickens.</div>
@@ -1607,7 +1604,7 @@ watch(totalChickenCount, () => {
     <div v-if="isLeftMenuOpen && (rebirthCount > 0 || hasBankUnlock)" class="left-menu-panel">
       <div v-if="hasBankUnlock" class="bank-section">
         <div class="menu-title">Bank</div>
-        <div class="menu-label">Stored: {{ Math.floor(bankChickenStored) }} | CPS: {{ bankCpsGeneration.toFixed(2) }}</div>
+        <div class="menu-label">Stored: {{ Math.floor(bankChickenStored) }} | Bank CPS: {{ bankCpsGeneration.toFixed(2) }}</div>
 
         <div class="bank-input-group">
           <input
