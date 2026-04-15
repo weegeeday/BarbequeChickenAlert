@@ -1,4 +1,4 @@
-﻿<script setup>
+<script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import popupImage from '../assets/BCA.svg'
 import soundFile from '../assets/sound.mp3'
@@ -27,6 +27,7 @@ const chickens = ref([])
 const areCollisionsEnabled = ref(true)
 const isPerformanceMode = ref(false)
 const isMenuOpen = ref(false)
+const isLeftMenuOpen = ref(false)
 const chickensPerPopup = ref(1)
 const upgradeLevel = ref(1)
 const hasAutoPopupClickUpgrade = ref(false)
@@ -34,6 +35,10 @@ const isAutoClickerEnabled = ref(true)
 const isSoundEnabled = ref(true)
 const rebirthCount = ref(0)
 const hasChickenBreastUnlock = ref(false)
+const hasBankUnlock = ref(false)
+const bankChickenStored = ref(0)
+const hasFactoryUnlock = ref(false)
+const factoryCount = ref(0)
 const popupSpeedUpgradeLevel = ref(0)
 const cookCount = ref(0)
 const isUnlimitedCap = ref(false)
@@ -47,6 +52,13 @@ const autosaveStatus = ref('Autosave: On')
 const pendingSavedState = ref(null)
 const saveImportInput = ref(null)
 const activeConfirmPrompt = ref(null)
+const bankDepositAmount = ref(0)
+const bankWithdrawAmount = ref(0)
+const floatingNumbers = ref([])
+const shouldFlashLeftMenu = ref(false)
+const chickenHueShift = ref(0)
+const rainbowCycleEnabled = ref(false)
+const performanceNoticeVisible = ref(false)
 
 let popupTimerId = null
 let animationFrameId = null
@@ -58,6 +70,7 @@ let stableFpsDurationMs = 0
 let smoothedFps = 60
 let cookProductionCarry = 0
 let totalChickenEarned = 0
+let rainbowCycleHue = 0
 let sessionStartTimestamp = performance.now()
 let touchStartHandler = null
 let gestureStartHandler = null
@@ -71,6 +84,9 @@ const wingChickenImages = chickenImageEntries
   .map(([, src]) => src)
 const chickenBreastImages = chickenImageEntries
   .filter(([path]) => path.toLowerCase().includes('/full/'))
+  .map(([, src]) => src)
+const nuggetImages = chickenImageEntries
+  .filter(([path]) => path.toLowerCase().includes('/nugget/'))
   .map(([, src]) => src)
 const chickenImages = [...wingChickenImages, ...chickenBreastImages]
 
@@ -102,24 +118,37 @@ const nextUpgradeCost = computed(() => getUpgradeCost(upgradeLevel.value))
 const canAffordUpgrade = computed(() => chickenCount.value >= nextUpgradeCost.value)
 const autoPopupClickUpgradeCost = 1000
 const chickenBreastUnlockCost = 200
+const bankUnlockCost = 500
+const factoryUnlockCost = 300
 const cookBaseCost = 125
 const getPopupSpeedUpgradeCost = (level) => {
-  return Math.max(cookBaseCost, getUpgradeCost(level))
+  return Math.max(cookBaseCost, Math.floor(0.3 * (level ** 3) + 1 + 1e-9))
 }
 const getCookCost = (level) => {
-  return Math.max(cookBaseCost, getUpgradeCost(level))
+  return Math.max(cookBaseCost, Math.floor(1.5 * (level ** 3) + 1 + 1e-9))
+}
+const getFactoryCost = (level) => {
+  return Math.max(factoryUnlockCost, Math.floor(1.5 * (level ** 3) + 1 + 1e-9))
 }
 const rebirthMultiplier = computed(() => 1 + 0.5 * rebirthCount.value)
 const canAffordChickenBreastUnlock = computed(() => {
   return !hasChickenBreastUnlock.value && chickenCount.value >= chickenBreastUnlockCost
 })
-const nextPopupSpeedCost = computed(() => getPopupSpeedUpgradeCost(upgradeLevel.value))
+const canAffordBankUnlock = computed(() => {
+  return !hasBankUnlock.value && chickenCount.value >= bankUnlockCost
+})
+const canAffordFactoryUnlock = computed(() => {
+  return !hasFactoryUnlock.value && chickenCount.value >= factoryUnlockCost
+})
+const bankCpsGeneration = computed(() => bankChickenStored.value * 0.01)
+const factoryCpsGeneration = computed(() => factoryCount.value * 1.5)
+const nextPopupSpeedCost = computed(() => getPopupSpeedUpgradeCost(popupSpeedUpgradeLevel.value + 1))
 const canAffordPopupSpeedUpgrade = computed(() => chickenCount.value >= nextPopupSpeedCost.value)
-const nextCookCost = computed(() => getCookCost(upgradeLevel.value))
+const nextCookCost = computed(() => getCookCost(cookCount.value + 1))
 const canAffordCook = computed(() => chickenCount.value >= nextCookCost.value)
 const cookOutputPerSecond = computed(() => cookCount.value * (1 + rebirthCount.value))
 const currentPopupIntervalMs = computed(() => {
-  return Math.max(1000, 5000 - popupSpeedUpgradeLevel.value * 50)
+  return Math.max(1000, 5000 - popupSpeedUpgradeLevel.value * 100)
 })
 const isCompactHud = computed(() => viewportWidth.value < 520)
 const isPopupSpeedFullyUpgraded = computed(() => currentPopupIntervalMs.value <= 1000)
@@ -268,13 +297,31 @@ const createChicken = () => {
   const maxX = Math.max(0, viewportWidth.value - size)
   const maxY = Math.max(0, viewportHeight.value - size)
 
-  const validImages = hasChickenBreastUnlock.value
-    ? chickenImages
-    : (wingChickenImages.length > 0 ? wingChickenImages : chickenImages)
+  const imageTypes = []
+
+  if (wingChickenImages.length > 0) {
+    imageTypes.push({ key: 'wing', images: wingChickenImages })
+  }
+
+  if (hasChickenBreastUnlock.value && chickenBreastImages.length > 0) {
+    imageTypes.push({ key: 'breast', images: chickenBreastImages })
+  }
+
+  if (hasFactoryUnlock.value && nuggetImages.length > 0) {
+    imageTypes.push({ key: 'nugget', images: nuggetImages })
+  }
+
+  if (imageTypes.length === 0) {
+    imageTypes.push({ key: 'wing', images: chickenImages })
+  }
+
+  const selectedTypeObj = imageTypes[Math.floor(Math.random() * imageTypes.length)]
+  const selectedImage = selectedTypeObj.images[Math.floor(Math.random() * selectedTypeObj.images.length)]
 
   return {
     id: ++chickenIdSeed,
-    src: validImages[Math.floor(Math.random() * validImages.length)],
+    src: selectedImage,
+    type: selectedTypeObj.key,
     size,
     x: randomBetween(0, maxX),
     y: randomBetween(0, maxY),
@@ -340,6 +387,11 @@ const toggleMenu = () => {
   isMenuOpen.value = !isMenuOpen.value
 }
 
+const toggleLeftMenu = () => {
+  isLeftMenuOpen.value = !isLeftMenuOpen.value
+  shouldFlashLeftMenu.value = false
+}
+
 const upgradeChickenSpawn = () => {
   if (!canAffordUpgrade.value) {
     return
@@ -373,6 +425,15 @@ const rebirth = () => {
   totalChickenCount.value = 0
   chickensPerPopup.value = 1
   upgradeLevel.value = 1
+  hasAutoPopupClickUpgrade.value = false
+  hasChickenBreastUnlock.value = false
+  hasBankUnlock.value = false
+  bankChickenStored.value = 0
+  hasFactoryUnlock.value = false
+  factoryCount.value = 0
+  popupSpeedUpgradeLevel.value = 0
+  cookCount.value = 0
+  rainbowCycleHue = 0
   syncRenderedChickens()
 }
 
@@ -405,6 +466,63 @@ const hireCook = () => {
   cookCount.value += 1
   syncRenderedChickens()
 }
+
+const unlockBank = () => {
+  if (!canAffordBankUnlock.value) {
+    return
+  }
+
+  totalChickenCount.value -= bankUnlockCost
+  hasBankUnlock.value = true
+  shouldFlashLeftMenu.value = true
+  syncRenderedChickens()
+}
+
+const depositToBank = (amount) => {
+  const depositAmount = Math.min(amount, totalChickenCount.value)
+  if (depositAmount <= 0) {
+    return
+  }
+
+  totalChickenCount.value -= depositAmount
+  bankChickenStored.value += depositAmount
+  syncRenderedChickens()
+}
+
+const withdrawFromBank = (amount) => {
+  const withdrawAmount = Math.min(amount, bankChickenStored.value)
+  if (withdrawAmount <= 0) {
+    return
+  }
+
+  bankChickenStored.value -= withdrawAmount
+  totalChickenCount.value += withdrawAmount
+  syncRenderedChickens()
+}
+
+const unlockFactory = () => {
+  if (!canAffordFactoryUnlock.value) {
+    return
+  }
+
+  totalChickenCount.value -= factoryUnlockCost
+  hasFactoryUnlock.value = true
+  syncRenderedChickens()
+}
+
+const buyFactory = () => {
+  const nextFactoryCost = getFactoryCost(factoryCount.value + 1)
+  if (chickenCount.value < nextFactoryCost) {
+    return
+  }
+
+  totalChickenCount.value -= nextFactoryCost
+  factoryCount.value += 1
+  syncRenderedChickens()
+}
+
+const nextFactoryCost = computed(() => getFactoryCost(factoryCount.value + 1))
+const canAffordFactory = computed(() => chickenCount.value >= nextFactoryCost.value)
 
 const applyChickenCap = () => {
   chickenCap.value = normalizeCapValue(chickenCap.value)
@@ -449,6 +567,12 @@ const createSavePayload = () => {
     chickenCap: chickenCap.value,
     areCollisionsEnabled: areCollisionsEnabled.value,
     isPerformanceMode: isPerformanceMode.value,
+    hasBankUnlock: hasBankUnlock.value,
+    bankChickenStored: bankChickenStored.value,
+    hasFactoryUnlock: hasFactoryUnlock.value,
+    factoryCount: factoryCount.value,
+    chickenHueShift: chickenHueShift.value,
+    rainbowCycleEnabled: rainbowCycleEnabled.value,
   }
 }
 
@@ -566,6 +690,12 @@ const applySavedProgress = (savedState) => {
   chickenCap.value = normalizeCapValue(savedState.chickenCap)
   areCollisionsEnabled.value = savedState.areCollisionsEnabled !== false
   isPerformanceMode.value = Boolean(savedState.isPerformanceMode)
+  hasBankUnlock.value = Boolean(savedState.hasBankUnlock)
+  bankChickenStored.value = normalizePositiveInteger(savedState.bankChickenStored, 0, 0)
+  hasFactoryUnlock.value = Boolean(savedState.hasFactoryUnlock)
+  factoryCount.value = normalizePositiveInteger(savedState.factoryCount, 0, 0)
+  chickenHueShift.value = normalizePositiveInteger(savedState.chickenHueShift, 0, 0, 360)
+  rainbowCycleEnabled.value = Boolean(savedState.rainbowCycleEnabled)
 
   syncSoundPreference()
   enforceChickenCap()
@@ -731,13 +861,35 @@ const handlePointerUp = (event) => {
   activeDragId = null
 }
 
-const handleChickenClick = async (chicken) => {
+const handleChickenClick = async (chicken, event) => {
   if (chicken.movedWhileDragging) {
     chicken.movedWhileDragging = false
     return
   }
 
   await playChickenAudio()
+
+  let clickValue = 1
+  if (chicken.type === 'breast') {
+    clickValue = 2
+  }
+
+  addChicken(clickValue)
+
+  // Create floating number
+  const floatingId = Math.random()
+  const floatingNumber = {
+    id: floatingId,
+    value: clickValue,
+    x: event.clientX,
+    y: event.clientY,
+  }
+  floatingNumbers.value.push(floatingNumber)
+
+  // Remove after animation
+  window.setTimeout(() => {
+    floatingNumbers.value = floatingNumbers.value.filter(n => n.id !== floatingId)
+  }, 1000)
 }
 
 const shakeChickens = () => {
@@ -843,7 +995,12 @@ const animateChickens = (timestamp) => {
   smoothedFps = smoothedFps * 0.9 + instantaneousFps * 0.1
   fpsCounter.value = Math.round(smoothedFps)
 
-  const cookRate = cookOutputPerSecond.value
+  if (rainbowCycleEnabled.value) {
+    rainbowCycleHue = (rainbowCycleHue + 60 * deltaSeconds) % 360
+    chickenHueShift.value = Math.round(rainbowCycleHue)
+  }
+
+  const cookRate = cookOutputPerSecond.value + bankCpsGeneration.value + factoryCpsGeneration.value
   if (cookRate > 0) {
     const produced = cookRate * deltaSeconds + cookProductionCarry
     const producedWhole = Math.floor(produced)
@@ -873,6 +1030,10 @@ const animateChickens = (timestamp) => {
       if (lowFpsDurationMs >= 2000 && chickens.value.length >= 8) {
         areCollisionsEnabled.value = false
         isPerformanceMode.value = true
+        performanceNoticeVisible.value = true
+        window.setTimeout(() => {
+          performanceNoticeVisible.value = false
+        }, 10000)
         if (isUnlimitedCap.value) {
           isUnlimitedCap.value = false
           syncRenderedChickens()
@@ -890,6 +1051,10 @@ const animateChickens = (timestamp) => {
         isPerformanceMode.value = false
         lowFpsDurationMs = 0
         stableFpsDurationMs = 0
+      }
+
+      if (chickens.value.length <= 50) {
+        areCollisionsEnabled.value = true
       }
     }
   }
@@ -1068,7 +1233,14 @@ watch(totalChickenCount, () => {
 
 <template>
   <div class="black-screen" style="touch-action: none; user-select: none;">
-    <div v-if="!isCompactHud" class="fps-hud">FPS: {{ fpsCounter }} | Avg CPS: {{ averageCps.toFixed(1) }}</div>
+    <div class="hud-left">
+      <button
+        :class="['menu-button', { 'flash-button': shouldFlashLeftMenu }]"
+        type="button"
+        aria-label="Open left menu"
+        @click="toggleLeftMenu"
+      >☰</button>
+    </div>
 
     <div class="hud">
       <button class="menu-button" type="button" aria-label="Open menu" @click="toggleMenu">☰</button>
@@ -1110,6 +1282,36 @@ watch(totalChickenCount, () => {
           @click="unlockChickenBreast"
         >
           Unlock Chicken Breasts — Cost: {{ chickenBreastUnlockCost }}
+        </button>
+
+        <button
+          v-if="!hasBankUnlock"
+          type="button"
+          class="upgrade-button"
+          :disabled="!canAffordBankUnlock"
+          @click="unlockBank"
+        >
+          Unlock Bank — Cost: {{ bankUnlockCost }}
+        </button>
+
+        <button
+          v-if="!hasFactoryUnlock"
+          type="button"
+          class="upgrade-button"
+          :disabled="!canAffordFactoryUnlock"
+          @click="unlockFactory"
+        >
+          Unlock Factory — Cost: {{ factoryUnlockCost }}
+        </button>
+
+        <button
+          v-if="hasFactoryUnlock"
+          type="button"
+          class="upgrade-button"
+          :disabled="!canAffordFactory"
+          @click="buyFactory"
+        >
+          Buy Factory ({{ factoryCount }}) — {{ factoryCpsGeneration.toFixed(1) }} CPS — Cost: {{ nextFactoryCost }}
         </button>
 
         <button
@@ -1191,7 +1393,68 @@ watch(totalChickenCount, () => {
       </div>
     </div>
 
-    <div v-if="isPerformanceMode" class="performance-notice">
+    <div v-if="isLeftMenuOpen && rebirthCount > 0" class="left-menu-panel">
+      <div v-if="hasBankUnlock" class="bank-section">
+        <div class="menu-title">Bank</div>
+        <div class="menu-label">Stored: {{ bankChickenStored }} | CPS: {{ bankCpsGeneration.toFixed(2) }}</div>
+
+        <div class="bank-input-group">
+          <input
+            id="deposit-amount"
+            v-model.number="bankDepositAmount"
+            class="menu-input"
+            type="number"
+            min="0"
+            placeholder="Amount to deposit"
+          >
+          <button
+            type="button"
+            class="upgrade-button"
+            @click="depositToBank(bankDepositAmount)"
+          >
+            Deposit
+          </button>
+        </div>
+
+        <div class="bank-input-group">
+          <input
+            id="withdraw-amount"
+            v-model.number="bankWithdrawAmount"
+            class="menu-input"
+            type="number"
+            min="0"
+            placeholder="Amount to withdraw"
+          >
+          <button
+            type="button"
+            class="upgrade-button"
+            @click="withdrawFromBank(bankWithdrawAmount)"
+          >
+            Withdraw
+          </button>
+        </div>
+      </div>
+
+      <div class="hue-section">
+        <label for="hue-slider" class="menu-label">Hue Shift: {{ chickenHueShift }}°</label>
+        <input
+          id="hue-slider"
+          v-model.number="chickenHueShift"
+          :disabled="rainbowCycleEnabled"
+          class="hue-slider"
+          type="range"
+          min="0"
+          max="360"
+          step="1"
+        />
+        <label class="menu-toggle">
+          <input v-model="rainbowCycleEnabled" type="checkbox">
+          <span>Rainbow Cycle</span>
+        </label>
+      </div>
+    </div>
+
+    <div v-if="performanceNoticeVisible" class="performance-notice">
       Collision physics disabled for performance.
     </div>
 
@@ -1252,9 +1515,10 @@ watch(totalChickenCount, () => {
         width: `${chicken.size}px`,
         height: `${chicken.size}px`,
         transform: `rotate(${chicken.angle}deg)`,
+        filter: `hue-rotate(${chickenHueShift}deg)`,
       }"
       @pointerdown="handleChickenPointerDown(chicken, $event)"
-      @click="handleChickenClick(chicken)"
+      @click="handleChickenClick(chicken, $event)"
       draggable="false"
     />
 
@@ -1269,6 +1533,18 @@ watch(totalChickenCount, () => {
 
     <div v-if="isPopupVisible && isRarePopupActive" class="rare-popup-label">
       {{ rarePopupMultiplier }}x
+    </div>
+
+    <div
+      v-for="floatingNum in floatingNumbers"
+      :key="floatingNum.id"
+      class="floating-number"
+      :style="{
+        left: `${floatingNum.x}px`,
+        top: `${floatingNum.y}px`,
+      }"
+    >
+      +{{ floatingNum.value }}
     </div>
   </div>
 </template>
@@ -1286,6 +1562,16 @@ watch(totalChickenCount, () => {
   position: fixed;
   top: 1rem;
   right: 1rem;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hud-left {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
   z-index: 50;
   display: flex;
   align-items: center;
@@ -1333,6 +1619,35 @@ watch(totalChickenCount, () => {
   padding: 0.75rem;
   display: grid;
   gap: 0.55rem;
+}
+
+.left-menu-panel {
+  position: fixed;
+  top: 7rem;
+  left: 1rem;
+  z-index: 55;
+  width: min(320px, 88vw);
+  border: 1px solid #2c2c2c;
+  background: rgba(15, 15, 15, 0.96);
+  border-radius: 0.9rem;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.55rem;
+  max-height: 65vh;
+  overflow-y: auto;
+}
+
+.bank-input-group {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.bank-input-group .menu-input {
+  flex: 1;
+}
+
+.bank-input-group .upgrade-button {
+  flex: 0 0 auto;
 }
 
 .menu-title {
@@ -1446,6 +1761,57 @@ watch(totalChickenCount, () => {
   padding: 0.7rem;
   display: grid;
   gap: 0.45rem;
+}
+
+.hue-section {
+  border: 1px solid #2f3f3f;
+  background: rgba(15, 25, 25, 0.92);
+  border-radius: 0.8rem;
+  padding: 0.7rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.bank-section {
+  border: 1px solid #2c3a3c;
+  background: rgba(12, 24, 28, 0.92);
+  border-radius: 0.8rem;
+  padding: 0.7rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.hue-slider {
+  width: 100%;
+  height: 0.4rem;
+  border-radius: 0.2rem;
+  background: linear-gradient(to right, red, yellow, lime, cyan, blue, magenta, red);
+  outline: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.hue-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: #f0f0f0;
+  cursor: pointer;
+  border: 2px solid #1a1a1a;
+  box-shadow: 0 0 0.3rem rgba(0, 0, 0, 0.8);
+}
+
+.hue-slider::-moz-range-thumb {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: #f0f0f0;
+  cursor: pointer;
+  border: 2px solid #1a1a1a;
+  box-shadow: 0 0 0.3rem rgba(0, 0, 0, 0.8);
 }
 
 .performance-notice {
@@ -1617,6 +1983,11 @@ watch(totalChickenCount, () => {
     right: 0.75rem;
   }
 
+  .hud-left {
+    top: 0.75rem;
+    left: 0.75rem;
+  }
+
   .fps-hud {
     top: 0.75rem;
     left: 0.75rem;
@@ -1625,6 +1996,11 @@ watch(totalChickenCount, () => {
   .menu-panel {
     top: 3.45rem;
     right: 0.75rem;
+  }
+
+  .left-menu-panel {
+    top: 3.45rem;
+    left: 0.75rem;
   }
 
   .performance-notice {
@@ -1665,5 +2041,42 @@ watch(totalChickenCount, () => {
     opacity: 1;
     scale: 1;
   }
+}
+
+@keyframes float-up {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-60px) scale(1.2);
+  }
+}
+
+@keyframes flash-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.7);
+  }
+
+  50% {
+    box-shadow: 0 0 10px 4px rgba(74, 222, 128, 0.3);
+  }
+}
+
+.floating-number {
+  position: fixed;
+  pointer-events: none;
+  font-weight: 700;
+  font-size: 1.2rem;
+  color: #4ade80;
+  text-shadow: 0 0 4px rgba(74, 222, 128, 0.8);
+  animation: float-up 1s ease-out forwards;
+  z-index: 30;
+}
+
+.flash-button {
+  animation: flash-glow 1s ease-in-out infinite;
 }
 </style>
