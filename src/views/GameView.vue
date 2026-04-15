@@ -433,6 +433,59 @@ const upgradeAutoPopupClick = () => {
   syncRenderedChickens()
 }
 
+const unlockChickenBreast = () => {
+  if (!canAffordChickenBreastUnlock.value) {
+    return
+  }
+
+  totalChickenCount.value -= chickenBreastUnlockCost
+  hasChickenBreastUnlock.value = true
+  syncRenderedChickens()
+}
+
+const upgradePopupSpeed = () => {
+  if (!canAffordPopupSpeedUpgrade.value) {
+    return
+  }
+
+  totalChickenCount.value -= nextPopupSpeedCost.value
+  popupSpeedUpgradeLevel.value += 1
+  syncRenderedChickens()
+}
+
+const hireCook = () => {
+  if (!canAffordCook.value) {
+    return
+  }
+
+  totalChickenCount.value -= nextCookCost.value
+  cookCount.value += 1
+  bankEfficiencyPercent.value = Math.min(90, bankEfficiencyPercent.value + 1)
+  syncRenderedChickens()
+}
+
+const unlockBank = () => {
+  if (!canAffordBankUnlock.value) {
+    return
+  }
+
+  totalChickenCount.value -= bankUnlockCost
+  hasBankUnlock.value = true
+  shouldFlashLeftMenu.value = true
+  syncRenderedChickens()
+}
+
+const depositToBank = (amount) => {
+  const depositAmount = Math.min(amount, totalChickenCount.value)
+  if (depositAmount <= 0) {
+    return
+  }
+
+  totalChickenCount.value -= depositAmount
+  bankChickenStored.value += depositAmount
+  syncRenderedChickens()
+}
+
 const rebirthUpgradeOptions = [
   { key: 'none', label: 'Do nothing (free)' },
   { key: 'mult', label: '+0.5× Multiplier' },
@@ -595,21 +648,23 @@ const applyChickenCap = () => {
   syncRenderedChickens()
 }
 
-const toggleUnlimitedCap = () => {
-  const desiredValue = isUnlimitedCap.value
+const requestUnlimitedCapToggle = (event) => {
+  const desiredValue = Boolean(event?.target?.checked)
+
+  if (!desiredValue) {
+    isUnlimitedCap.value = false
+    applyChickenCap()
+    return
+  }
 
   activeConfirmPrompt.value = {
     title: 'Unlimited cap',
-    message: 'Are you sure you want to toggle unlimited cap? This can cause lag or crash your browser.',
-    confirmLabel: 'Yes, toggle it',
+    message: 'Are you sure you want to enable unlimited cap? This can cause lag or crash your browser.',
+    confirmLabel: 'Yes, enable it',
     cancelLabel: 'Cancel',
     onConfirm: () => {
-      if (!desiredValue) {
-        applyChickenCap()
-      }
-    },
-    onCancel: () => {
-      isUnlimitedCap.value = !desiredValue
+      isUnlimitedCap.value = true
+      syncRenderedChickens()
     },
   }
 }
@@ -1461,9 +1516,9 @@ watch(totalChickenCount, () => {
 
         <label class="menu-toggle">
           <input
-            v-model="isUnlimitedCap"
+            :checked="isUnlimitedCap"
             type="checkbox"
-            @change="toggleUnlimitedCap"
+            @change="requestUnlimitedCapToggle"
           >
           Unlimited cap
         </label>
@@ -1765,7 +1820,7 @@ watch(totalChickenCount, () => {
   position: fixed;
   top: 3.8rem;
   right: 1rem;
-  z-index: 55;
+  z-index: 90;
   width: min(320px, 88vw);
   border: 1px solid #2c2c2c;
   background: rgba(15, 15, 15, 0.96);
@@ -1775,13 +1830,20 @@ watch(totalChickenCount, () => {
   gap: 0.55rem;
   max-height: 65vh;
   overflow-y: auto;
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-overflow-scrolling: touch;
+}
+
+.menu-panel * {
+  pointer-events: auto;
 }
 
 .left-menu-panel {
   position: fixed;
   top: 7rem;
   left: 1rem;
-  z-index: 55;
+  z-index: 65;
   width: min(320px, 88vw);
   border: 1px solid #2c2c2c;
   background: rgba(15, 15, 15, 0.96);
@@ -1791,6 +1853,9 @@ watch(totalChickenCount, () => {
   gap: 0.55rem;
   max-height: 65vh;
   overflow-y: auto;
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-overflow-scrolling: touch;
 }
 
 .bank-input-group {
@@ -1999,11 +2064,12 @@ watch(totalChickenCount, () => {
 .save-overlay {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 1000;
   background: rgba(0, 0, 0, 0.66);
   display: grid;
   place-items: center;
   padding: 1rem;
+  pointer-events: auto;
 }
 
 .rebirth-overlay {
@@ -2013,10 +2079,12 @@ watch(totalChickenCount, () => {
   display: block;
   padding: 0;
   margin-top: 0.4rem;
+  pointer-events: none;
 }
 
 .rebirth-overlay .save-dialog {
   width: 100%;
+  pointer-events: auto;
 }
 
 .save-dialog {
@@ -2027,6 +2095,7 @@ watch(totalChickenCount, () => {
   padding: 1rem;
   display: grid;
   gap: 0.6rem;
+  pointer-events: auto;
 }
 
 .save-title {
@@ -2048,6 +2117,7 @@ watch(totalChickenCount, () => {
   text-align: left;
   cursor: pointer;
   font-size: 0.82rem;
+  pointer-events: auto;
 }
 
 .prompt-actions {
