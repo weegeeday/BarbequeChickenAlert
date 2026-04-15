@@ -59,6 +59,7 @@ const shouldFlashLeftMenu = ref(false)
 const chickenHueShift = ref(0)
 const rainbowCycleEnabled = ref(false)
 const performanceNoticeVisible = ref(false)
+const iOSInteractiveTouchSelector = '.menu-panel, .left-menu-panel, .hud, .hud-left, .save-dialog, .save-overlay, button, input, label, a'
 
 let popupTimerId = null
 let animationFrameId = null
@@ -74,6 +75,7 @@ let rainbowCycleHue = 0
 let sessionStartTimestamp = performance.now()
 let touchStartHandler = null
 let gestureStartHandler = null
+let gestureChangeHandler = null
 
 const popupAudio = new Audio(soundFile)
 const chickenAudio = new Audio(sound2File)
@@ -140,6 +142,7 @@ const canAffordBankUnlock = computed(() => {
 const canAffordFactoryUnlock = computed(() => {
   return !hasFactoryUnlock.value && chickenCount.value >= factoryUnlockCost
 })
+const canOpenLeftMenu = computed(() => rebirthCount.value > 0 || hasBankUnlock.value)
 const bankCpsGeneration = computed(() => bankChickenStored.value * 0.01)
 const factoryCpsGeneration = computed(() => factoryCount.value * 1.5 * rebirthMultiplier.value)
 const nextPopupSpeedCost = computed(() => getPopupSpeedUpgradeCost(popupSpeedUpgradeLevel.value + 1))
@@ -388,6 +391,10 @@ const toggleMenu = () => {
 }
 
 const toggleLeftMenu = () => {
+  if (!canOpenLeftMenu.value) {
+    return
+  }
+
   isLeftMenuOpen.value = !isLeftMenuOpen.value
   shouldFlashLeftMenu.value = false
 }
@@ -1150,6 +1157,11 @@ onMounted(() => {
 
   // Prevent double-tap zoom on iOS
   touchStartHandler = (e) => {
+    if (e.target instanceof Element && e.target.closest(iOSInteractiveTouchSelector)) {
+      touchStartHandler.lastTouchTime = Date.now()
+      return
+    }
+
     const now = Date.now()
     if (now - (touchStartHandler.lastTouchTime || 0) < 300 && e.touches.length === 1) {
       e.preventDefault()
@@ -1157,13 +1169,17 @@ onMounted(() => {
     touchStartHandler.lastTouchTime = now
   }
 
-  // Prevent pinch zoom
-  gestureStartHandler = (e) => {
-    e.preventDefault()
+  // Allow pinch zoom-out, but block pinch zoom-in beyond the default scale
+  gestureStartHandler = () => {}
+  gestureChangeHandler = (e) => {
+    if (e.scale > 1) {
+      e.preventDefault()
+    }
   }
 
   document.addEventListener('touchstart', touchStartHandler, { passive: false })
   document.addEventListener('gesturestart', gestureStartHandler, { passive: false })
+  document.addEventListener('gesturechange', gestureChangeHandler, { passive: false })
 
   animationFrameId = window.requestAnimationFrame(animateChickens)
 })
@@ -1195,6 +1211,9 @@ onUnmounted(() => {
   }
   if (gestureStartHandler) {
     document.removeEventListener('gesturestart', gestureStartHandler)
+  }
+  if (gestureChangeHandler) {
+    document.removeEventListener('gesturechange', gestureChangeHandler)
   }
 
   popupAudio.pause()
@@ -1238,6 +1257,7 @@ watch(totalChickenCount, () => {
         :class="['menu-button', { 'flash-button': shouldFlashLeftMenu }]"
         type="button"
         aria-label="Open left menu"
+        :disabled="!canOpenLeftMenu"
         @click="toggleLeftMenu"
       >☰</button>
     </div>
@@ -1393,7 +1413,7 @@ watch(totalChickenCount, () => {
       </div>
     </div>
 
-    <div v-if="isLeftMenuOpen && rebirthCount > 0" class="left-menu-panel">
+    <div v-if="isLeftMenuOpen && (rebirthCount > 0 || hasBankUnlock)" class="left-menu-panel">
       <div v-if="hasBankUnlock" class="bank-section">
         <div class="menu-title">Bank</div>
         <div class="menu-label">Stored: {{ bankChickenStored }} | CPS: {{ bankCpsGeneration.toFixed(2) }}</div>
@@ -1435,7 +1455,7 @@ watch(totalChickenCount, () => {
         </div>
       </div>
 
-      <div class="hue-section">
+      <div v-if="rebirthCount > 0" class="hue-section">
         <label for="hue-slider" class="menu-label">Hue Shift: {{ chickenHueShift }}°</label>
         <input
           id="hue-slider"
