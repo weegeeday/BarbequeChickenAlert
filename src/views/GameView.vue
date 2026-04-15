@@ -120,7 +120,7 @@ const nextUpgradeCost = computed(() => getUpgradeCost(upgradeLevel.value))
 const canAffordUpgrade = computed(() => chickenCount.value >= nextUpgradeCost.value)
 const autoPopupClickUpgradeCost = 1000
 const chickenBreastUnlockCost = 200
-const bankUnlockCost = 500
+const bankUnlockCost = 5000
 const factoryUnlockCost = 300
 const cookBaseCost = 125
 const getPopupSpeedUpgradeCost = (level) => {
@@ -143,7 +143,7 @@ const canAffordFactoryUnlock = computed(() => {
   return !hasFactoryUnlock.value && chickenCount.value >= factoryUnlockCost
 })
 const canOpenLeftMenu = computed(() => rebirthCount.value > 0 || hasBankUnlock.value)
-const bankCpsGeneration = computed(() => bankChickenStored.value * 0.01)
+const bankCpsGeneration = computed(() => bankChickenStored.value * 0.75 * 0.01)
 const factoryCpsGeneration = computed(() => factoryCount.value * 1.5 * rebirthMultiplier.value)
 const nextPopupSpeedCost = computed(() => getPopupSpeedUpgradeCost(popupSpeedUpgradeLevel.value + 1))
 const canAffordPopupSpeedUpgrade = computed(() => chickenCount.value >= nextPopupSpeedCost.value)
@@ -1007,6 +1007,10 @@ const animateChickens = (timestamp) => {
     chickenHueShift.value = Math.round(rainbowCycleHue)
   }
 
+  if (bankChickenStored.value > 0) {
+    bankChickenStored.value *= Math.pow(0.99, deltaSeconds / 60)
+  }
+
   const cookRate = cookOutputPerSecond.value + bankCpsGeneration.value + factoryCpsGeneration.value
   if (cookRate > 0) {
     const produced = cookRate * deltaSeconds + cookProductionCarry
@@ -1416,7 +1420,7 @@ watch(totalChickenCount, () => {
     <div v-if="isLeftMenuOpen && (rebirthCount > 0 || hasBankUnlock)" class="left-menu-panel">
       <div v-if="hasBankUnlock" class="bank-section">
         <div class="menu-title">Bank</div>
-        <div class="menu-label">Stored: {{ bankChickenStored }} | CPS: {{ bankCpsGeneration.toFixed(2) }}</div>
+        <div class="menu-label">Stored: {{ Math.floor(bankChickenStored) }} | CPS: {{ bankCpsGeneration.toFixed(2) }}</div>
 
         <div class="bank-input-group">
           <input
