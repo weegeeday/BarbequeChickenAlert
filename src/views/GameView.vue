@@ -67,6 +67,7 @@ const shouldFlashLeftMenu = ref(false)
 const chickenHueShift = ref(0)
 const rainbowCycleEnabled = ref(false)
 const performanceNoticeVisible = ref(false)
+const isHelpOpen = ref(false)
 const iOSInteractiveTouchSelector = '.menu-panel, .left-menu-panel, .hud, .hud-left, .save-dialog, .save-overlay, button, input, label, a'
 
 let popupTimerId = null
@@ -398,6 +399,14 @@ const handlePopupClick = () => {
 
 const toggleMenu = () => {
   isMenuOpen.value = !isMenuOpen.value
+}
+
+const openHelp = () => {
+  isHelpOpen.value = true
+}
+
+const closeHelp = () => {
+  isHelpOpen.value = false
 }
 
 const toggleLeftMenu = () => {
@@ -1044,18 +1053,6 @@ const handleChickenClick = async (chicken, event) => {
   }, 1000)
 }
 
-const shakeChickens = () => {
-  chickens.value.forEach((chicken) => {
-    if (chicken.isDragging) {
-      return
-    }
-
-    chicken.velocityX = randomBetween(-420, 420)
-    chicken.velocityY = randomBetween(-420, 420)
-    chicken.angularVelocity = randomBetween(-600, 600)
-  })
-}
-
 const resolveChickenCollisions = () => {
   const chickenList = chickens.value
 
@@ -1413,11 +1410,30 @@ watch(totalChickenCount, () => {
 
     <div class="hud">
       <button class="menu-button" type="button" aria-label="Open menu" @click="toggleMenu">☰</button>
-      <button class="shake-button" type="button" @click="shakeChickens">Shake</button>
+      <button class="menu-button help-button" type="button" aria-label="Open help" @click="openHelp">?</button>
       <div class="counter">Chicken: {{ chickenCount }}</div>
     </div>
 
     <div v-if="!isCompactHud" class="save-status">{{ autosaveStatus }}</div>
+
+    <div v-if="isHelpOpen" class="save-overlay" @click.self="closeHelp">
+      <div class="save-dialog help-dialog">
+        <div class="save-title">Quick Help</div>
+        <div class="help-list">
+          <div class="save-text"><strong>Chicken click values:</strong> Wing = 1 chicken/click, Breast = 2 chickens/click.</div>
+          <div class="save-text"><strong>Chicken per popup upgrade:</strong> CPP gain scales by formula and is multiplied by rebirth multiplier.</div>
+          <div class="save-text"><strong>Auto-click popup:</strong> Instantly clicks each popup once (same reward as manual click).</div>
+          <div class="save-text"><strong>Factory:</strong> Each factory generates 1.5 × rebirthMultiplier chickens/s.</div>
+          <div class="save-text"><strong>Cook:</strong> Each cook generates (1 + rebirthCount) chickens/s and +1% bank efficiency (cap 90%).</div>
+          <div class="save-text"><strong>Bank:</strong> CPS = stored × bankEfficiency × 0.01; stored amount decays 1% per minute.</div>
+          <div class="save-text"><strong>Rendered cap:</strong> Manual cap range is 25 to 2000 chickens.</div>
+          <div class="save-text"><strong>Rebirth base bonus:</strong> +0.5× multiplier per rebirth.</div>
+        </div>
+        <div class="prompt-actions">
+          <button type="button" class="save-button" @click="closeHelp">Close</button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="isMenuOpen" class="menu-panel">
       <div class="menu-title">Upgrades</div>
@@ -1801,7 +1817,6 @@ watch(totalChickenCount, () => {
 }
 
 .menu-button,
-.shake-button,
 .counter {
   border: 1px solid #2c2c2c;
   background: rgba(15, 15, 15, 0.92);
@@ -1811,9 +1826,14 @@ watch(totalChickenCount, () => {
   font-size: 0.9rem;
 }
 
-.menu-button,
-.shake-button {
+.menu-button {
   cursor: pointer;
+}
+
+.help-button {
+  min-width: 2rem;
+  text-align: center;
+  font-weight: 700;
 }
 
 .menu-panel {
@@ -2096,6 +2116,15 @@ watch(totalChickenCount, () => {
   display: grid;
   gap: 0.6rem;
   pointer-events: auto;
+}
+
+.help-dialog {
+  width: min(560px, 95vw);
+}
+
+.help-list {
+  display: grid;
+  gap: 0.35rem;
 }
 
 .save-title {
