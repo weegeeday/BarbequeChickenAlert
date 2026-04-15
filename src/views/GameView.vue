@@ -141,7 +141,7 @@ const canAffordFactoryUnlock = computed(() => {
   return !hasFactoryUnlock.value && chickenCount.value >= factoryUnlockCost
 })
 const bankCpsGeneration = computed(() => bankChickenStored.value * 0.01)
-const factoryCpsGeneration = computed(() => factoryCount.value * 1.5)
+const factoryCpsGeneration = computed(() => factoryCount.value * 1.5 * rebirthMultiplier.value)
 const nextPopupSpeedCost = computed(() => getPopupSpeedUpgradeCost(popupSpeedUpgradeLevel.value + 1))
 const canAffordPopupSpeedUpgrade = computed(() => chickenCount.value >= nextPopupSpeedCost.value)
 const nextCookCost = computed(() => getCookCost(cookCount.value + 1))
