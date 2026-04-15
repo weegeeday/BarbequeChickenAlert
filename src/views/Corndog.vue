@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import popupImage from '../assets/BCA.svg'
 import soundFile from '../assets/sound.mp3'
 import sound2File from '../assets/sound2.mp3'
+import sound3File from '../assets/sound3.mp3'
 
 const chickenImageModules = import.meta.glob('../assets/corndog/**/*.{png,jpg,jpeg,webp,avif,gif}', {
   eager: true,
@@ -14,8 +15,11 @@ const angularFrictionPerSecond = 0.55
 const saveStorageKey = 'barbequeChickenAlert.save.special.corndog.v1'
 const repoUrl = 'https://github.com/weegeeday/BarbequeChickenAlert'
 const bugReportUrl = `${repoUrl}/issues/new`
+const rarePopupChance = 0.02
+const rarePopupMultiplier = 10
 
 const isPopupVisible = ref(false)
+const isRarePopupActive = ref(false)
 const popupCycleKey = ref(0)
 const viewportWidth = ref(window.innerWidth)
 const viewportHeight = ref(window.innerHeight)
@@ -61,6 +65,7 @@ let gestureStartHandler = null
 
 const popupAudio = new Audio(soundFile)
 const chickenAudio = new Audio(sound2File)
+const rarePopupAudio = new Audio(sound3File)
 const chickenImageEntries = Object.entries(chickenImageModules)
 const wingChickenImages = chickenImageEntries
   .filter(([path]) => path.toLowerCase().includes('/wings/'))
@@ -72,11 +77,13 @@ const chickenImages = [...wingChickenImages, ...chickenBreastImages]
 
 popupAudio.preload = 'auto'
 chickenAudio.preload = 'auto'
+rarePopupAudio.preload = 'auto'
 
 const syncSoundPreference = () => {
   const muted = !isSoundEnabled.value
   popupAudio.muted = muted
   chickenAudio.muted = muted
+  rarePopupAudio.muted = muted
 }
 
 syncSoundPreference()
@@ -118,7 +125,7 @@ const currentPopupIntervalMs = computed(() => {
 const isCompactHud = computed(() => viewportWidth.value < 520)
 const isPopupSpeedFullyUpgraded = computed(() => currentPopupIntervalMs.value <= 1000)
 const getRebirthLevelRequirement = () => {
-  return 45 + rebirthCount.value * 10
+  return 10 + rebirthCount.value * 10
 }
 const nextRebirthLevelRequirement = computed(() => getRebirthLevelRequirement())
 const canAffordRebirth = computed(() => upgradeLevel.value >= nextRebirthLevelRequirement.value)
@@ -198,6 +205,19 @@ const playChickenAudio = async () => {
   }
 }
 
+const playRarePopupAudio = async () => {
+  if (!isSoundEnabled.value) {
+    return
+  }
+
+  try {
+    rarePopupAudio.currentTime = 0
+    await rarePopupAudio.play()
+  } catch (error) {
+    void error
+  }
+}
+
 const updateViewport = () => {
   const visualViewport = window.visualViewport
 
@@ -209,16 +229,39 @@ const updateViewport = () => {
   })
 }
 
-const spawnPopup = () => {
+const showPopup = (isRare = false) => {
+  if (isPopupVisible.value) {
+    if (isRare && !isRarePopupActive.value) {
+      isRarePopupActive.value = true
+      popupCycleKey.value += 1
+      void playRarePopupAudio()
+    }
+    return
+  }
+
+  isRarePopupActive.value = isRare
   isPopupVisible.value = true
   popupCycleKey.value += 1
-  void playPopupAudio()
+  if (isRare) {
+    void playRarePopupAudio()
+  } else {
+    void playPopupAudio()
+  }
 
   if (hasAutoPopupClickUpgrade.value && isAutoClickerEnabled.value) {
     window.setTimeout(() => {
       handlePopupClick()
     }, 0)
   }
+}
+
+const spawnPopup = () => {
+  const isRare = Math.random() < rarePopupChance
+  showPopup(isRare)
+}
+
+const forceRarePopup = () => {
+  showPopup(true)
 }
 
 const createChicken = () => {
@@ -278,12 +321,13 @@ const addChicken = (amount) => {
 const handlePopupClick = () => {
   void playChickenAudio()
 
-  const requested = chickensPerPopup.value
+  const requested = chickensPerPopup.value * (isRarePopupActive.value ? rarePopupMultiplier : 1)
 
   if (requested > 0) {
     addChicken(requested)
   }
 
+  isRarePopupActive.value = false
   isPopupVisible.value = false
 
   if (popupTimerId !== null) {
@@ -902,6 +946,7 @@ const animateChickens = (timestamp) => {
 }
 
 onMounted(() => {
+  window.forceBCAGPopup = forceRarePopup
   document.title = 'Corndogcat Alert'
   updateViewport()
   sessionStartTimestamp = performance.now()
@@ -959,6 +1004,10 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (window.forceBCAGPopup === forceRarePopup) {
+    delete window.forceBCAGPopup
+  }
+
   if (popupTimerId !== null) {
     window.clearTimeout(popupTimerId)
   }
@@ -987,6 +1036,8 @@ onUnmounted(() => {
   popupAudio.currentTime = 0
   chickenAudio.pause()
   chickenAudio.currentTime = 0
+  rarePopupAudio.pause()
+  rarePopupAudio.currentTime = 0
 })
 
 watch(
@@ -1210,11 +1261,15 @@ watch(totalChickenCount, () => {
     <img
       v-if="isPopupVisible"
       :key="popupCycleKey"
-      class="popup-image"
+      :class="['popup-image', { 'popup-image--rare': isRarePopupActive }]"
       :src="popupImage"
-      alt="BCA popup"
+      :alt="isRarePopupActive ? 'BCAG popup' : 'BCA popup'"
       @click="handlePopupClick"
     />
+
+    <div v-if="isPopupVisible && isRarePopupActive" class="rare-popup-label">
+      {{ rarePopupMultiplier }}x
+    </div>
   </div>
 </template>
 
@@ -1519,6 +1574,29 @@ watch(totalChickenCount, () => {
   animation: popup-in 220ms ease-out;
 }
 
+.popup-image--rare {
+  filter: saturate(1.25) brightness(1.18) drop-shadow(0 0 1.1rem rgba(255, 219, 133, 0.95));
+  animation: popup-in 220ms ease-out, rare-shimmer 1.1s ease-in-out infinite;
+}
+
+.rare-popup-label {
+  position: fixed;
+  z-index: 41;
+  right: clamp(1rem, 3vw, 2rem);
+  bottom: clamp(1rem, 3vw, 2rem);
+  transform: translateY(-95%);
+  border: 1px solid #846100;
+  background: linear-gradient(135deg, rgba(106, 78, 0, 0.9), rgba(170, 129, 0, 0.9));
+  color: #fff0c4;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  pointer-events: none;
+  text-shadow: 0 0 8px rgba(255, 231, 163, 0.7);
+}
+
 @media (max-width: 767px) {
   .popup-image {
     left: 50%;
@@ -1526,6 +1604,12 @@ watch(totalChickenCount, () => {
     transform: translateX(-50%);
     width: clamp(180px, 72vw, 420px);
     max-width: 86vw;
+  }
+
+  .rare-popup-label {
+    left: 50%;
+    right: auto;
+    transform: translate(-50%, -95%);
   }
 
   .hud {
@@ -1569,6 +1653,17 @@ watch(totalChickenCount, () => {
   to {
     opacity: 1;
     scale: 1;
+  }
+}
+
+@keyframes rare-shimmer {
+  0%,
+  100% {
+    filter: saturate(1.15) brightness(1.1) drop-shadow(0 0 0.8rem rgba(255, 216, 138, 0.8));
+  }
+
+  50% {
+    filter: saturate(1.45) brightness(1.32) drop-shadow(0 0 1.3rem rgba(255, 240, 172, 1));
   }
 }
 </style>
