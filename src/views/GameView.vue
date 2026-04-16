@@ -60,6 +60,7 @@ const pendingSavedState = ref(null)
 const saveImportInput = ref(null)
 const activeConfirmPrompt = ref(null)
 const deleteSaveConfirmationText = ref('')
+const lockedLeftMenuNoticeOpen = ref(false)
 const bankDepositAmount = ref(0)
 const bankWithdrawAmount = ref(0)
 const floatingNumbers = ref([])
@@ -416,6 +417,19 @@ const toggleLeftMenu = () => {
 
   isLeftMenuOpen.value = !isLeftMenuOpen.value
   shouldFlashLeftMenu.value = false
+}
+
+const handleLeftMenuButtonClick = () => {
+  if (canOpenLeftMenu.value) {
+    toggleLeftMenu()
+    return
+  }
+
+  lockedLeftMenuNoticeOpen.value = true
+}
+
+const closeLockedLeftMenuNotice = () => {
+  lockedLeftMenuNoticeOpen.value = false
 }
 
 const upgradeChickenSpawn = () => {
@@ -1397,11 +1411,11 @@ watch(totalChickenCount, () => {
   <div class="black-screen" style="touch-action: none; user-select: none;">
     <div class="hud-left">
       <button
-        :class="['menu-button', { 'flash-button': shouldFlashLeftMenu }]"
+        :class="['menu-button', { 'flash-button': shouldFlashLeftMenu, 'menu-button--locked': !canOpenLeftMenu }]"
         type="button"
         aria-label="Open left menu"
-        :disabled="!canOpenLeftMenu"
-        @click="toggleLeftMenu"
+        :aria-disabled="!canOpenLeftMenu"
+        @click="handleLeftMenuButtonClick"
       >☰</button>
     </div>
 
@@ -1423,11 +1437,22 @@ watch(totalChickenCount, () => {
           <div class="save-text"><strong>Factory:</strong> Each factory generates 2 × rebirthMultiplier chickens/s.</div>
           <div class="save-text"><strong>Cook:</strong> Each cook generates (1 + rebirthCount) chickens/s and +1% bank efficiency (cap 90%).</div>
           <div class="save-text"><strong>Bank:</strong> CPS = stored × bankEfficiency × 0.01; stored amount decays 1% per minute.</div>
+          <div class="save-text"><strong>Left menu:</strong> Unlock it by rebirthing once or buying the Bank.</div>
           <div class="save-text"><strong>Rendered cap:</strong> Manual cap range is 25 to 2000 chickens.</div>
-          <div class="save-text"><strong>Rebirth base bonus:</strong> +0.5× multiplier per rebirth.</div>
+          <div class="save-text"><strong>Rebirth:</strong> +0.5× multiplier, or other upgrades. Requires Rebirth Chicken. (Gained when rebirthing, can be used on first rebirth)</div>
         </div>
         <div class="prompt-actions">
           <button type="button" class="save-button" @click="closeHelp">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="lockedLeftMenuNoticeOpen" class="save-overlay" @click.self="closeLockedLeftMenuNotice">
+      <div class="save-dialog help-dialog">
+        <div class="save-title">Left Menu Locked</div>
+        <div class="save-text">Unlock it by rebirthing once or buying the Bank upgrade.</div>
+        <div class="prompt-actions">
+          <button type="button" class="save-button" @click="closeLockedLeftMenuNotice">Got it</button>
         </div>
       </div>
     </div>
@@ -1827,6 +1852,10 @@ watch(totalChickenCount, () => {
   cursor: pointer;
 }
 
+.menu-button--locked {
+  opacity: 0.7;
+}
+
 .help-button {
   min-width: 2rem;
   text-align: center;
@@ -1905,6 +1934,9 @@ watch(totalChickenCount, () => {
 .menu-label {
   color: #cfcfcf;
   font-size: 0.78rem;
+  display: block;
+  width: 100%;
+  line-height: 1.25;
 }
 
 .menu-input {
@@ -1914,6 +1946,8 @@ watch(totalChickenCount, () => {
   border-radius: 0.6rem;
   padding: 0.45rem 0.55rem;
   font-size: 0.82rem;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .menu-toggle {
@@ -1922,6 +1956,7 @@ watch(totalChickenCount, () => {
   gap: 0.45rem;
   color: #d8d8d8;
   font-size: 0.8rem;
+  width: 100%;
 }
 
 .menu-actions {
