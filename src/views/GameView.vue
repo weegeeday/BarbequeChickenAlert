@@ -23,6 +23,7 @@ const popupCycleKey = ref(0)
 const viewportWidth = ref(window.innerWidth)
 const viewportHeight = ref(window.innerHeight)
 const viewportScale = ref(window.visualViewport?.scale ?? 1)
+const topUiInset = ref(16)
 const chickens = ref([])
 const areCollisionsEnabled = ref(true)
 const isPerformanceMode = ref(false)
@@ -86,6 +87,31 @@ let sessionStartTimestamp = performance.now()
 let touchStartHandler = null
 let gestureStartHandler = null
 let gestureChangeHandler = null
+
+const detectAndroidNativeApp = () => {
+  const platform = window.Capacitor?.getPlatform?.()
+
+  if (platform === 'android') {
+    return true
+  }
+
+  if (platform === 'ios') {
+    return false
+  }
+
+  return Boolean(window.Capacitor) && /android/i.test(window.navigator.userAgent)
+}
+
+const isMobileClient = () => {
+  const platform = window.Capacitor?.getPlatform?.()
+
+  if (platform === 'android' || platform === 'ios') {
+    return true
+  }
+
+  const coarsePointer = window.matchMedia?.('(pointer: coarse)')?.matches ?? false
+  return coarsePointer || /android|iphone|ipad|ipod|mobile/i.test(window.navigator.userAgent)
+}
 
 const popupAudio = new Audio(soundFile)
 const chickenAudio = new Audio(sound2File)
@@ -266,6 +292,9 @@ const updateViewport = () => {
   viewportWidth.value = Math.round(visualViewport?.width ?? window.innerWidth)
   viewportHeight.value = Math.round(visualViewport?.height ?? window.innerHeight)
   viewportScale.value = visualViewport?.scale ?? window.devicePixelRatio ?? 1
+  const viewportTopOffset = Math.round(visualViewport?.offsetTop ?? 0)
+  const minimumTopInset = detectAndroidNativeApp() ? 76 : 16
+  topUiInset.value = Math.max(minimumTopInset, viewportTopOffset + 16)
   chickens.value.forEach((chicken) => {
     clampPosition(chicken)
   })
@@ -1288,8 +1317,17 @@ onMounted(() => {
     if (serializedSave) {
       const parsedSave = JSON.parse(serializedSave)
       if (parsedSave && typeof parsedSave === 'object') {
-        pendingSavedState.value = parsedSave
-        showSavePrompt.value = true
+        if (isMobileClient()) {
+          applySavedProgress(parsedSave)
+          sessionSavingEnabled.value = true
+          autosaveStatus.value = 'Autosave: On'
+          pendingSavedState.value = null
+          showSavePrompt.value = false
+          writeAutosave()
+        } else {
+          pendingSavedState.value = parsedSave
+          showSavePrompt.value = true
+        }
       }
     }
   } catch {
@@ -1408,7 +1446,14 @@ watch(totalChickenCount, () => {
 </script>
 
 <template>
-  <div class="black-screen" style="touch-action: none; user-select: none;">
+  <div
+    class="black-screen"
+    :style="{
+      touchAction: 'none',
+      userSelect: 'none',
+      '--ui-top-offset': `${topUiInset}px`,
+    }"
+  >
     <div class="hud-left">
       <button
         :class="['menu-button', { 'flash-button': shouldFlashLeftMenu, 'menu-button--locked': !canOpenLeftMenu }]"
@@ -1807,7 +1852,7 @@ watch(totalChickenCount, () => {
 
 .hud {
   position: fixed;
-  top: 1rem;
+  top: var(--ui-top-offset, 1rem);
   right: 1rem;
   z-index: 50;
   display: flex;
@@ -1817,7 +1862,7 @@ watch(totalChickenCount, () => {
 
 .hud-left {
   position: fixed;
-  top: 1rem;
+  top: var(--ui-top-offset, 1rem);
   left: 1rem;
   z-index: 50;
   display: flex;
@@ -1827,7 +1872,7 @@ watch(totalChickenCount, () => {
 
 .fps-hud {
   position: fixed;
-  top: 1rem;
+  top: var(--ui-top-offset, 1rem);
   left: 1rem;
   z-index: 50;
   border: 1px solid #2c2c2c;
@@ -1864,7 +1909,7 @@ watch(totalChickenCount, () => {
 
 .menu-panel {
   position: fixed;
-  top: 3.8rem;
+  top: calc(var(--ui-top-offset, 1rem) + 2.8rem);
   right: 1rem;
   z-index: 90;
   width: min(320px, 88vw);
@@ -1887,7 +1932,7 @@ watch(totalChickenCount, () => {
 
 .left-menu-panel {
   position: fixed;
-  top: 7rem;
+  top: calc(var(--ui-top-offset, 1rem) + 6rem);
   left: 1rem;
   z-index: 65;
   width: min(320px, 88vw);
@@ -2089,7 +2134,7 @@ watch(totalChickenCount, () => {
 
 .performance-notice {
   position: fixed;
-  top: 3.75rem;
+  top: calc(var(--ui-top-offset, 1rem) + 2.75rem);
   right: 1rem;
   z-index: 50;
   border: 1px solid #634400;
@@ -2102,7 +2147,7 @@ watch(totalChickenCount, () => {
 
 .save-status {
   position: fixed;
-  top: 3.75rem;
+  top: calc(var(--ui-top-offset, 1rem) + 2.75rem);
   left: 1rem;
   z-index: 50;
   border: 1px solid #2c2c2c;
@@ -2279,38 +2324,38 @@ watch(totalChickenCount, () => {
   }
 
   .hud {
-    top: 0.75rem;
+    top: var(--ui-top-offset, 0.75rem);
     right: 0.75rem;
   }
 
   .hud-left {
-    top: 0.75rem;
+    top: var(--ui-top-offset, 0.75rem);
     left: 0.75rem;
   }
 
   .fps-hud {
-    top: 0.75rem;
+    top: var(--ui-top-offset, 0.75rem);
     left: 0.75rem;
   }
 
   .menu-panel {
-    top: 3.45rem;
+    top: calc(var(--ui-top-offset, 0.75rem) + 2.7rem);
     right: 0.75rem;
   }
 
   .left-menu-panel {
-    top: 3.45rem;
+    top: calc(var(--ui-top-offset, 0.75rem) + 2.7rem);
     left: 0.75rem;
   }
 
   .performance-notice {
-    top: 3.4rem;
+    top: calc(var(--ui-top-offset, 0.75rem) + 2.65rem);
     right: 0.75rem;
     max-width: 70vw;
   }
 
   .save-status {
-    top: 3.4rem;
+    top: calc(var(--ui-top-offset, 0.75rem) + 2.65rem);
     left: 0.75rem;
   }
 
