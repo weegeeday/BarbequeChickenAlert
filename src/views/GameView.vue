@@ -28,6 +28,8 @@ const viewportWidth = ref(window.innerWidth)
 const viewportHeight = ref(window.innerHeight)
 const viewportScale = ref(window.visualViewport?.scale ?? 1)
 const topUiInset = ref(16)
+const safeAreaTopInset = ref(0)
+const isEdgeToEdgeScreen = ref(false)
 const chickens = ref([])
 const areCollisionsEnabled = ref(true)
 const isPerformanceMode = ref(false)
@@ -111,20 +113,6 @@ let gestureStartHandler = null
 let gestureChangeHandler = null
 let handleVisibilityChange = null
 
-const detectAndroidNativeApp = () => {
-  const platform = window.Capacitor?.getPlatform?.()
-
-  if (platform === 'android') {
-    return true
-  }
-
-  if (platform === 'ios') {
-    return false
-  }
-
-  return Boolean(window.Capacitor) && /android/i.test(window.navigator.userAgent)
-}
-
 const isMobileClient = () => {
   const platform = window.Capacitor?.getPlatform?.()
 
@@ -134,6 +122,54 @@ const isMobileClient = () => {
 
   const coarsePointer = window.matchMedia?.('(pointer: coarse)')?.matches ?? false
   return coarsePointer || /android|iphone|ipad|ipod|mobile/i.test(window.navigator.userAgent)
+}
+
+const uiScale = computed(() => {
+  const widthFactor = viewportWidth.value / 430
+  const heightFactor = viewportHeight.value / 820
+  const baseScale = Math.min(1, widthFactor, heightFactor)
+
+  return Math.max(0.82, baseScale)
+})
+
+const popupMaxWidth = computed(() => {
+  const touchWidthLimit = isTouchInputDevice.value ? 0.84 : 0.62
+  const widthLimit = viewportWidth.value * touchWidthLimit
+  const heightLimit = viewportHeight.value * 0.58
+  const absoluteCap = isTouchInputDevice.value ? 430 : 500
+
+  return Math.round(Math.max(180, Math.min(absoluteCap, widthLimit, heightLimit)))
+})
+
+const popupMaxHeight = computed(() => {
+  const heightLimit = isTouchInputDevice.value ? 0.40 : 0.48
+  return Math.round(Math.max(180, viewportHeight.value * heightLimit))
+})
+
+const popupBottomInset = computed(() => {
+  const baseInset = isTouchInputDevice.value ? 1.15 : 1
+  const shortScreenBoost = viewportHeight.value < 700 ? 0.9 : 0
+
+  return `${baseInset + shortScreenBoost}rem`
+})
+
+const measureSafeAreaTopInset = () => {
+  if (typeof document === 'undefined' || !document.body) {
+    return 0
+  }
+
+  const probe = document.createElement('div')
+  probe.style.position = 'fixed'
+  probe.style.top = '0'
+  probe.style.left = '0'
+  probe.style.visibility = 'hidden'
+  probe.style.pointerEvents = 'none'
+  probe.style.paddingTop = 'env(safe-area-inset-top)'
+  document.body.appendChild(probe)
+
+  const inset = Number.parseFloat(window.getComputedStyle(probe).paddingTop) || 0
+  document.body.removeChild(probe)
+  return inset
 }
 
 const popupAudio = new Audio(soundFile)
@@ -413,9 +449,17 @@ const updateViewport = () => {
   viewportWidth.value = Math.round(visualViewport?.width ?? window.innerWidth)
   viewportHeight.value = Math.round(visualViewport?.height ?? window.innerHeight)
   viewportScale.value = visualViewport?.scale ?? window.devicePixelRatio ?? 1
-  const viewportTopOffset = Math.round(visualViewport?.offsetTop ?? 0)
-  const minimumTopInset = detectAndroidNativeApp() ? 76 : 16
-  topUiInset.value = Math.max(minimumTopInset, viewportTopOffset + 16)
+
+  safeAreaTopInset.value = measureSafeAreaTopInset()
+  isEdgeToEdgeScreen.value = safeAreaTopInset.value > 0
+
+  const touchBaseInset = isEdgeToEdgeScreen.value
+    ? Math.max(10, viewportHeight.value * 0.016)
+    : Math.max(4, viewportHeight.value * 0.006)
+
+  topUiInset.value = isTouchInputDevice.value
+    ? Math.round(touchBaseInset)
+    : 16
   chickens.value.forEach((chicken) => {
     clampPosition(chicken)
   })
@@ -1804,6 +1848,10 @@ watch(totalChickenCount, () => {
       touchAction: 'none',
       userSelect: 'none',
       '--ui-top-offset': `${topUiInset}px`,
+      '--ui-scale': uiScale,
+      '--popup-max-width': `${popupMaxWidth}px`,
+      '--popup-max-height': `${popupMaxHeight}px`,
+      '--popup-bottom-offset': popupBottomInset,
     }"
   >
     <div class="hud-left">
@@ -2312,21 +2360,25 @@ watch(totalChickenCount, () => {
   width: 100%;
   overflow: hidden;
   background: #000;
+  --ui-scale: 1;
+  --popup-max-width: 480px;
+  --popup-max-height: 320px;
+  --popup-bottom-offset: 1rem;
 }
 
 .hud {
   position: fixed;
-  top: var(--ui-top-offset, 1rem);
+  top: calc(var(--ui-top-offset, 1rem) + env(safe-area-inset-top, 0px));
   right: 1rem;
   z-index: 50;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: calc(0.5rem * var(--ui-scale));
 }
 
 .hud-left {
   position: fixed;
-  top: var(--ui-top-offset, 1rem);
+  top: calc(var(--ui-top-offset, 1rem) + env(safe-area-inset-top, 0px));
   left: 1rem;
   z-index: 50;
   display: flex;
@@ -2336,7 +2388,7 @@ watch(totalChickenCount, () => {
 
 .fps-hud {
   position: fixed;
-  top: var(--ui-top-offset, 1rem);
+  top: calc(var(--ui-top-offset, 1rem) + env(safe-area-inset-top, 0px));
   left: 1rem;
   z-index: 50;
   border: 1px solid #2c2c2c;
@@ -2353,8 +2405,8 @@ watch(totalChickenCount, () => {
   background: rgba(15, 15, 15, 0.92);
   color: #f1f1f1;
   border-radius: 999px;
-  padding: 0.35rem 0.75rem;
-  font-size: 0.9rem;
+  padding: calc(0.35rem * var(--ui-scale)) calc(0.75rem * var(--ui-scale));
+  font-size: calc(0.9rem * var(--ui-scale));
 }
 
 .menu-button {
@@ -2373,14 +2425,14 @@ watch(totalChickenCount, () => {
 
 .menu-panel {
   position: fixed;
-  top: calc(var(--ui-top-offset, 1rem) + 2.8rem);
+  top: calc(var(--ui-top-offset, 1rem) + env(safe-area-inset-top, 0px) + 2.8rem);
   right: 1rem;
   z-index: 90;
-  width: min(320px, 88vw);
+  width: min(calc(320px * var(--ui-scale)), 88vw);
   border: 1px solid #2c2c2c;
   background: rgba(15, 15, 15, 0.96);
   border-radius: 0.9rem;
-  padding: 0.75rem;
+  padding: calc(0.75rem * var(--ui-scale));
   display: grid;
   gap: 0.55rem;
   max-height: 65vh;
@@ -2396,14 +2448,14 @@ watch(totalChickenCount, () => {
 
 .left-menu-panel {
   position: fixed;
-  top: calc(var(--ui-top-offset, 1rem) + 6rem);
+  top: calc(var(--ui-top-offset, 1rem) + env(safe-area-inset-top, 0px) + 6rem);
   left: 1rem;
   z-index: 65;
-  width: min(320px, 88vw);
+  width: min(calc(320px * var(--ui-scale)), 88vw);
   border: 1px solid #2c2c2c;
   background: rgba(15, 15, 15, 0.96);
   border-radius: 0.9rem;
-  padding: 0.75rem;
+  padding: calc(0.75rem * var(--ui-scale));
   display: grid;
   gap: 0.55rem;
   max-height: 65vh;
@@ -2663,7 +2715,7 @@ watch(totalChickenCount, () => {
 
 .performance-notice {
   position: fixed;
-  top: calc(var(--ui-top-offset, 1rem) + 2.75rem);
+  top: calc(var(--ui-top-offset, 1rem) + env(safe-area-inset-top, 0px) + 2.75rem);
   right: 1rem;
   z-index: 50;
   border: 1px solid #634400;
@@ -2676,7 +2728,7 @@ watch(totalChickenCount, () => {
 
 .save-status {
   position: fixed;
-  top: calc(var(--ui-top-offset, 1rem) + 2.75rem);
+  top: calc(var(--ui-top-offset, 1rem) + env(safe-area-inset-top, 0px) + 2.75rem);
   left: 1rem;
   z-index: 50;
   border: 1px solid #2c2c2c;
@@ -2722,6 +2774,8 @@ watch(totalChickenCount, () => {
   display: grid;
   gap: 0.6rem;
   pointer-events: auto;
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
 }
 
 .help-dialog {
@@ -2828,10 +2882,12 @@ watch(totalChickenCount, () => {
   position: fixed;
   z-index: 40;
   right: clamp(1rem, 3vw, 2rem);
-  bottom: clamp(1rem, 3vw, 2rem);
-  width: clamp(220px, 23vw, 480px);
-  max-width: 30vw;
+  bottom: calc(var(--popup-bottom-offset) + env(safe-area-inset-bottom, 0px));
+  width: min(var(--popup-max-width), 86vw);
+  max-width: var(--popup-max-width);
+  max-height: var(--popup-max-height);
   height: auto;
+  object-fit: contain;
   cursor: pointer;
   animation: popup-in 220ms ease-out;
 }
@@ -2876,8 +2932,9 @@ watch(totalChickenCount, () => {
     left: 50%;
     right: auto;
     transform: translateX(-50%);
-    width: clamp(180px, 72vw, 420px);
-    max-width: 86vw;
+    width: min(var(--popup-max-width), 88vw);
+    max-width: 88vw;
+    max-height: min(var(--popup-max-height), 36vh);
   }
 
   .rare-popup-label {
@@ -2887,38 +2944,40 @@ watch(totalChickenCount, () => {
   }
 
   .hud {
-    top: var(--ui-top-offset, 0.75rem);
+    top: calc(var(--ui-top-offset, 0.75rem) + env(safe-area-inset-top, 0px));
     right: 0.75rem;
   }
 
   .hud-left {
-    top: var(--ui-top-offset, 0.75rem);
+    top: calc(var(--ui-top-offset, 0.75rem) + env(safe-area-inset-top, 0px));
     left: 0.75rem;
   }
 
   .fps-hud {
-    top: var(--ui-top-offset, 0.75rem);
+    top: calc(var(--ui-top-offset, 0.75rem) + env(safe-area-inset-top, 0px));
     left: 0.75rem;
   }
 
   .menu-panel {
-    top: calc(var(--ui-top-offset, 0.75rem) + 2.7rem);
+    top: calc(var(--ui-top-offset, 0.75rem) + env(safe-area-inset-top, 0px) + 2.7rem);
     right: 0.75rem;
+    width: min(calc(320px * var(--ui-scale)), 90vw);
   }
 
   .left-menu-panel {
-    top: calc(var(--ui-top-offset, 0.75rem) + 2.7rem);
+    top: calc(var(--ui-top-offset, 0.75rem) + env(safe-area-inset-top, 0px) + 2.7rem);
     left: 0.75rem;
+    width: min(calc(320px * var(--ui-scale)), 90vw);
   }
 
   .performance-notice {
-    top: calc(var(--ui-top-offset, 0.75rem) + 2.65rem);
+    top: calc(var(--ui-top-offset, 0.75rem) + env(safe-area-inset-top, 0px) + 2.65rem);
     right: 0.75rem;
     max-width: 70vw;
   }
 
   .save-status {
-    top: calc(var(--ui-top-offset, 0.75rem) + 2.65rem);
+    top: calc(var(--ui-top-offset, 0.75rem) + env(safe-area-inset-top, 0px) + 2.65rem);
     left: 0.75rem;
   }
 
