@@ -15,10 +15,14 @@ const angularFrictionPerSecond = 0.55
 const saveStorageKey = 'barbequeChickenAlert.save.v1'
 const repoUrl = 'https://github.com/weegeeday/BarbequeChickenAlert'
 const bugReportUrl = `${repoUrl}/issues/new`
-const rarePopupChance = 0.02
+const baseRarePopupChance = 0.02
 const rarePopupMultiplier = 10
+const extremelyRarePopupChance = 1 / 10000
+const extremelyRarePopupMultiplier = 100
 const isPopupVisible = ref(false)
+const activePopupTier = ref('normal')
 const isRarePopupActive = ref(false)
+const isExtremePopupActive = ref(false)
 const popupCycleKey = ref(0)
 const viewportWidth = ref(window.innerWidth)
 const viewportHeight = ref(window.innerHeight)
@@ -46,7 +50,6 @@ const hasBankUnlock = ref(false)
 const bankChickenStored = ref(0)
 const hasFactoryUnlock = ref(false)
 const factoryCount = ref(0)
-const popupSpeedUpgradeLevel = ref(0)
 const cookCount = ref(0)
 const isUnlimitedCap = ref(false)
 const chickenCap = ref(300)
@@ -69,6 +72,21 @@ const chickenHueShift = ref(0)
 const rainbowCycleEnabled = ref(false)
 const performanceNoticeVisible = ref(false)
 const isHelpOpen = ref(false)
+const isOtherUpgradesOpen = ref(false)
+const shouldFlashRightMenu = ref(false)
+const hoveredUpgradeId = ref(null)
+const manualChickenClicks = ref(0)
+const isDocumentVisible = ref(true)
+const rarePopupShownCount = ref(0)
+const totalCookProduced = ref(0)
+const totalFactoryProduced = ref(0)
+const totalBankDeposited = ref(0)
+const clickPowerUpgradeLevel = ref(0)
+const popupSpeedOtherUpgradeLevel = ref(0)
+const cookCpsUpgradeLevel = ref(0)
+const factoryCpsUpgradeLevel = ref(0)
+const bankDecayDelayUpgradeLevel = ref(0)
+const rareChanceUpgradeLevel = ref(0)
 const iOSInteractiveTouchSelector = '.menu-panel, .left-menu-panel, .hud, .hud-left, .save-dialog, .save-overlay, button, input, label, a'
 
 let popupTimerId = null
@@ -80,12 +98,16 @@ let lowFpsDurationMs = 0
 let stableFpsDurationMs = 0
 let smoothedFps = 60
 let cookProductionCarry = 0
+let bankProductionCarry = 0
+let factoryProductionCarry = 0
 let totalChickenEarned = 0
 let rainbowCycleHue = 0
+let bankDecayDelayRemainingMs = 60000
 let sessionStartTimestamp = performance.now()
 let touchStartHandler = null
 let gestureStartHandler = null
 let gestureChangeHandler = null
+let handleVisibilityChange = null
 
 const popupAudio = new Audio(soundFile)
 const chickenAudio = new Audio(sound2File)
@@ -105,6 +127,10 @@ const chickenImages = [...wingChickenImages, ...chickenBreastImages]
 popupAudio.preload = 'auto'
 chickenAudio.preload = 'auto'
 rarePopupAudio.preload = 'auto'
+
+popupAudio.muted = true
+chickenAudio.muted = true
+rarePopupAudio.muted = true
 
 const syncSoundPreference = () => {
   const muted = !isSoundEnabled.value
@@ -133,16 +159,41 @@ const chickenBreastUnlockCost = 200
 const bankUnlockCost = 5000
 const factoryUnlockCost = 300
 const cookBaseCost = 125
-const getPopupSpeedUpgradeCost = (level) => {
-  return Math.max(cookBaseCost, Math.floor(0.3 * (level ** 3) + 1 + 1e-9))
-}
 const getCookCost = (level) => {
   return Math.max(cookBaseCost, Math.floor(1.5 * (level ** 3) + 1 + 1e-9))
 }
 const getFactoryCost = (level) => {
   return Math.max(factoryUnlockCost, Math.floor(1.5 * (level ** 3) + 1 + 1e-9))
 }
+const getClickPowerUpgradeCost = (level) => {
+  return Math.max(80, Math.floor(65 * (level ** 2.1) + 1))
+}
+const getOtherPopupSpeedUpgradeCost = (level) => {
+  return Math.max(125, Math.floor(120 * (level ** 2.2) + 1))
+}
+const getCookCpsUpgradeCost = (level) => {
+  return Math.max(180, Math.floor(165 * (level ** 2.25) + 1))
+}
+const getFactoryCpsUpgradeCost = (level) => {
+  return Math.max(240, Math.floor(220 * (level ** 2.25) + 1))
+}
+const getBankDelayUpgradeCost = (level) => {
+  return Math.max(260, Math.floor(230 * (level ** 2.3) + 1))
+}
+const getRareChanceUpgradeCost = (level) => {
+  return Math.max(320, Math.floor(280 * (level ** 2.4) + 1))
+}
+const clickUpgradeUnlockThresholds = [12, 28, 50, 80, 120, 170, 230, 300, 380, 470]
+const cookUpgradeUnlockThresholds = [40, 180, 700, 2100, 5400]
+const factoryUpgradeUnlockThresholds = [60, 280, 900, 2600, 6800]
+const bankDelayUpgradeUnlockThresholds = [250, 1200, 4500, 14000, 42000]
+const rareChanceUpgradeUnlockThresholds = [4, 14, 45]
+const rareChanceUpgradeBonuses = [0.003, 0.006, 0.01]
+const bankDecayBaseDelayMs = 60000
 const rebirthMultiplier = computed(() => 1 + 0.5 * rebirthCount.value + rebirthUpgrades.value.extraMultiplier)
+const clickPowerMultiplier = computed(() => 1 + clickPowerUpgradeLevel.value)
+const cookCpsUpgradeMultiplier = computed(() => 1 + cookCpsUpgradeLevel.value * 0.25)
+const factoryCpsUpgradeMultiplier = computed(() => 1 + factoryCpsUpgradeLevel.value * 0.25)
 const canAffordChickenBreastUnlock = computed(() => {
   return !hasChickenBreastUnlock.value && chickenCount.value >= chickenBreastUnlockCost
 })
@@ -155,15 +206,32 @@ const canAffordFactoryUnlock = computed(() => {
 const canOpenLeftMenu = computed(() => rebirthCount.value > 0 || hasBankUnlock.value)
 const bankEfficiencyPercent = ref(35)
 const bankCpsGeneration = computed(() => bankChickenStored.value * (bankEfficiencyPercent.value / 100) * 0.01)
-const factoryCpsGeneration = computed(() => factoryCount.value * 2 * rebirthMultiplier.value)
-const nextPopupSpeedCost = computed(() => getPopupSpeedUpgradeCost(popupSpeedUpgradeLevel.value + 1))
+const factoryCpsGeneration = computed(() => factoryCount.value * 2 * rebirthMultiplier.value * factoryCpsUpgradeMultiplier.value)
+const nextPopupSpeedCost = computed(() => getOtherPopupSpeedUpgradeCost(popupSpeedOtherUpgradeLevel.value + 1))
 const canAffordPopupSpeedUpgrade = computed(() => chickenCount.value >= nextPopupSpeedCost.value)
 const nextCookCost = computed(() => getCookCost(cookCount.value + 1))
 const canAffordCook = computed(() => chickenCount.value >= nextCookCost.value)
-const cookOutputPerSecond = computed(() => cookCount.value * (1 + rebirthCount.value))
+const cookOutputPerSecond = computed(() => cookCount.value * (1 + rebirthCount.value) * cookCpsUpgradeMultiplier.value)
 const currentPopupIntervalMs = computed(() => {
-  return Math.max(1000, 5000 - popupSpeedUpgradeLevel.value * 100)
+  return Math.max(1000, 5000 - popupSpeedOtherUpgradeLevel.value * 100)
 })
+const currentRarePopupChance = computed(() => {
+  const bonus = rareChanceUpgradeBonuses.slice(0, rareChanceUpgradeLevel.value).reduce((total, value) => total + value, 0)
+  return Math.min(0.75, baseRarePopupChance + bonus)
+})
+const activePopupMultiplier = computed(() => {
+  if (activePopupTier.value === 'extremelyRare') {
+    return extremelyRarePopupMultiplier
+  }
+
+  if (activePopupTier.value === 'rare') {
+    return rarePopupMultiplier
+  }
+
+  return 1
+})
+const bankDecayDelayMs = computed(() => bankDecayBaseDelayMs + bankDecayDelayUpgradeLevel.value * 10000)
+const hasPopupTierBonus = computed(() => activePopupMultiplier.value > 1)
 const isCompactHud = computed(() => viewportWidth.value < 520)
 const isPopupSpeedFullyUpgraded = computed(() => currentPopupIntervalMs.value <= 1000)
 const getRebirthLevelRequirement = () => {
@@ -174,6 +242,58 @@ const canAffordRebirth = computed(() => upgradeLevel.value >= nextRebirthLevelRe
 const canAffordAutoPopupClickUpgrade = computed(() => {
   return !hasAutoPopupClickUpgrade.value && chickenCount.value >= autoPopupClickUpgradeCost
 })
+const nextClickPowerCost = computed(() => getClickPowerUpgradeCost(clickPowerUpgradeLevel.value + 1))
+const canAffordClickPowerUpgrade = computed(() => {
+  return clickPowerUpgradeLevel.value < 10 && chickenCount.value >= nextClickPowerCost.value
+})
+const nextCookCpsUpgradeCost = computed(() => getCookCpsUpgradeCost(cookCpsUpgradeLevel.value + 1))
+const canAffordCookCpsUpgrade = computed(() => {
+  return cookCpsUpgradeLevel.value < 5 && chickenCount.value >= nextCookCpsUpgradeCost.value
+})
+const nextFactoryCpsUpgradeCost = computed(() => getFactoryCpsUpgradeCost(factoryCpsUpgradeLevel.value + 1))
+const canAffordFactoryCpsUpgrade = computed(() => {
+  return factoryCpsUpgradeLevel.value < 5 && chickenCount.value >= nextFactoryCpsUpgradeCost.value
+})
+const nextBankDelayUpgradeCost = computed(() => getBankDelayUpgradeCost(bankDecayDelayUpgradeLevel.value + 1))
+const canAffordBankDelayUpgrade = computed(() => {
+  return bankDecayDelayUpgradeLevel.value < 5 && chickenCount.value >= nextBankDelayUpgradeCost.value
+})
+const nextRareChanceUpgradeCost = computed(() => getRareChanceUpgradeCost(rareChanceUpgradeLevel.value + 1))
+const canAffordRareChanceUpgrade = computed(() => {
+  return rareChanceUpgradeLevel.value < 3 && chickenCount.value >= nextRareChanceUpgradeCost.value
+})
+const nextClickPowerUnlockThreshold = computed(() => {
+  return clickUpgradeUnlockThresholds[clickPowerUpgradeLevel.value] ?? Number.MAX_SAFE_INTEGER
+})
+const isClickPowerUpgradeUnlocked = computed(() => manualChickenClicks.value >= nextClickPowerUnlockThreshold.value)
+const nextCookUpgradeUnlockThreshold = computed(() => {
+  return cookUpgradeUnlockThresholds[cookCpsUpgradeLevel.value] ?? Number.MAX_SAFE_INTEGER
+})
+const isCookUpgradeUnlocked = computed(() => {
+  return cookCount.value > 0 && totalCookProduced.value >= nextCookUpgradeUnlockThreshold.value
+})
+const nextFactoryUpgradeUnlockThreshold = computed(() => {
+  return factoryUpgradeUnlockThresholds[factoryCpsUpgradeLevel.value] ?? Number.MAX_SAFE_INTEGER
+})
+const isFactoryUpgradeUnlocked = computed(() => {
+  return factoryCount.value > 0 && totalFactoryProduced.value >= nextFactoryUpgradeUnlockThreshold.value
+})
+const nextBankDelayUnlockThreshold = computed(() => {
+  return bankDelayUpgradeUnlockThresholds[bankDecayDelayUpgradeLevel.value] ?? Number.MAX_SAFE_INTEGER
+})
+const isBankDelayUpgradeUnlocked = computed(() => {
+  return hasBankUnlock.value && totalBankDeposited.value >= nextBankDelayUnlockThreshold.value
+})
+const nextRareChanceUnlockThreshold = computed(() => {
+  return rareChanceUpgradeUnlockThresholds[rareChanceUpgradeLevel.value] ?? Number.MAX_SAFE_INTEGER
+})
+const isRareChanceUpgradeUnlocked = computed(() => {
+  return rarePopupShownCount.value >= nextRareChanceUnlockThreshold.value
+})
+const shouldShowRightMenuAffordHint = computed(() => {
+  return rebirthCount.value === 0 && upgradeLevel.value === 1 && canAffordUpgrade.value
+})
+const activePopupMultiplierLabel = computed(() => `${activePopupMultiplier.value}x`)
 const effectiveRenderLimit = computed(() => {
   if (isUnlimitedCap.value) {
     return totalChickenCount.value
@@ -222,7 +342,7 @@ const clampPosition = (chicken) => {
 }
 
 const playPopupAudio = async () => {
-  if (!isSoundEnabled.value) {
+  if (!isSoundEnabled.value || !isDocumentVisible.value) {
     return
   }
 
@@ -235,7 +355,7 @@ const playPopupAudio = async () => {
 }
 
 const playChickenAudio = async () => {
-  if (!isSoundEnabled.value) {
+  if (!isSoundEnabled.value || !isDocumentVisible.value) {
     return
   }
 
@@ -248,7 +368,7 @@ const playChickenAudio = async () => {
 }
 
 const playRarePopupAudio = async () => {
-  if (!isSoundEnabled.value) {
+  if (!isSoundEnabled.value || !isDocumentVisible.value) {
     return
   }
 
@@ -271,20 +391,37 @@ const updateViewport = () => {
   })
 }
 
-const showPopup = (isRare = false) => {
+const updatePopupTierFlags = (tier) => {
+  activePopupTier.value = tier
+  isRarePopupActive.value = tier === 'rare' || tier === 'extremelyRare'
+  isExtremePopupActive.value = tier === 'extremelyRare'
+}
+
+const registerRarePopupAppearance = (tier) => {
+  if (tier === 'rare' || tier === 'extremelyRare') {
+    rarePopupShownCount.value += 1
+  }
+}
+
+const showPopup = (tier = 'normal') => {
   if (isPopupVisible.value) {
-    if (isRare && !isRarePopupActive.value) {
-      isRarePopupActive.value = true
+    const activeIsRareTier = activePopupTier.value === 'rare' || activePopupTier.value === 'extremelyRare'
+    const incomingIsRareTier = tier === 'rare' || tier === 'extremelyRare'
+
+    if (incomingIsRareTier && !activeIsRareTier) {
+      registerRarePopupAppearance(tier)
+      updatePopupTierFlags(tier)
       popupCycleKey.value += 1
       void playRarePopupAudio()
     }
     return
   }
 
-  isRarePopupActive.value = isRare
+  updatePopupTierFlags(tier)
+  registerRarePopupAppearance(tier)
   isPopupVisible.value = true
   popupCycleKey.value += 1
-  if (isRare) {
+  if (tier === 'rare' || tier === 'extremelyRare') {
     void playRarePopupAudio()
   } else {
     void playPopupAudio()
@@ -297,13 +434,28 @@ const showPopup = (isRare = false) => {
   }
 }
 
+const rollPopupTier = () => {
+  const roll = Math.random()
+  const clampedRareChance = Math.max(0, Math.min(0.9999, currentRarePopupChance.value))
+
+  if (roll < extremelyRarePopupChance) {
+    return 'extremelyRare'
+  }
+
+  if (roll < extremelyRarePopupChance + clampedRareChance) {
+    return 'rare'
+  }
+
+  return 'normal'
+}
+
 const spawnPopup = () => {
-  const isRare = Math.random() < rarePopupChance
-  showPopup(isRare)
+  const popupTier = rollPopupTier()
+  showPopup(popupTier)
 }
 
 const forceRarePopup = () => {
-  showPopup(true)
+  showPopup('rare')
 }
 
 const createChicken = () => {
@@ -381,14 +533,14 @@ const addChicken = (amount) => {
 const handlePopupClick = () => {
   void playChickenAudio()
 
-  const requested = chickensPerPopup.value * (isRarePopupActive.value ? rarePopupMultiplier : 1)
+  const requested = chickensPerPopup.value * activePopupMultiplier.value
   const total = Math.floor(requested * rebirthMultiplier.value)
 
   if (total > 0) {
     addChicken(total)
   }
 
-  isRarePopupActive.value = false
+  updatePopupTierFlags('normal')
   isPopupVisible.value = false
 
   if (popupTimerId !== null) {
@@ -400,6 +552,29 @@ const handlePopupClick = () => {
 
 const toggleMenu = () => {
   isMenuOpen.value = !isMenuOpen.value
+}
+
+const toggleOtherUpgrades = () => {
+  isOtherUpgradesOpen.value = !isOtherUpgradesOpen.value
+}
+
+const closeOtherUpgrades = () => {
+  isOtherUpgradesOpen.value = false
+}
+
+const handleUpgradeCardClick = (cardId, purchaseHandler) => {
+  const isMobile = window.innerWidth <= 480
+
+  if (isMobile) {
+    if (hoveredUpgradeId.value === cardId) {
+      purchaseHandler()
+      hoveredUpgradeId.value = null
+    } else {
+      hoveredUpgradeId.value = cardId
+    }
+  } else {
+    purchaseHandler()
+  }
 }
 
 const openHelp = () => {
@@ -431,6 +606,10 @@ const handleLeftMenuButtonClick = () => {
 const closeLockedLeftMenuNotice = () => {
   lockedLeftMenuNoticeOpen.value = false
 }
+
+watch(shouldShowRightMenuAffordHint, (value) => {
+  shouldFlashRightMenu.value = value
+})
 
 const upgradeChickenSpawn = () => {
   if (!canAffordUpgrade.value) {
@@ -472,7 +651,58 @@ const upgradePopupSpeed = () => {
   }
 
   totalChickenCount.value -= nextPopupSpeedCost.value
-  popupSpeedUpgradeLevel.value += 1
+  popupSpeedOtherUpgradeLevel.value += 1
+  syncRenderedChickens()
+}
+
+const upgradeClickPower = () => {
+  if (!isClickPowerUpgradeUnlocked.value || !canAffordClickPowerUpgrade.value) {
+    return
+  }
+
+  totalChickenCount.value -= nextClickPowerCost.value
+  clickPowerUpgradeLevel.value += 1
+  syncRenderedChickens()
+}
+
+const upgradeCookCps = () => {
+  if (!isCookUpgradeUnlocked.value || !canAffordCookCpsUpgrade.value) {
+    return
+  }
+
+  totalChickenCount.value -= nextCookCpsUpgradeCost.value
+  cookCpsUpgradeLevel.value += 1
+  syncRenderedChickens()
+}
+
+const upgradeFactoryCps = () => {
+  if (!isFactoryUpgradeUnlocked.value || !canAffordFactoryCpsUpgrade.value) {
+    return
+  }
+
+  totalChickenCount.value -= nextFactoryCpsUpgradeCost.value
+  factoryCpsUpgradeLevel.value += 1
+  syncRenderedChickens()
+}
+
+const upgradeBankDecayDelay = () => {
+  if (!isBankDelayUpgradeUnlocked.value || !canAffordBankDelayUpgrade.value) {
+    return
+  }
+
+  totalChickenCount.value -= nextBankDelayUpgradeCost.value
+  bankDecayDelayUpgradeLevel.value += 1
+  bankDecayDelayRemainingMs = bankDecayDelayMs.value
+  syncRenderedChickens()
+}
+
+const upgradeRareChance = () => {
+  if (!isRareChanceUpgradeUnlocked.value || !canAffordRareChanceUpgrade.value) {
+    return
+  }
+
+  totalChickenCount.value -= nextRareChanceUpgradeCost.value
+  rareChanceUpgradeLevel.value += 1
   syncRenderedChickens()
 }
 
@@ -506,6 +736,8 @@ const depositToBank = (amount) => {
 
   totalChickenCount.value -= depositAmount
   bankChickenStored.value += depositAmount
+  totalBankDeposited.value += depositAmount
+  bankDecayDelayRemainingMs = bankDecayDelayMs.value
   syncRenderedChickens()
 }
 
@@ -622,8 +854,19 @@ const confirmRebirthMenu = () => {
   bankChickenStored.value = 0
   hasFactoryUnlock.value = rebirthUpgrades.value.earlyChickenUpgrade
   factoryCount.value = 0
-  popupSpeedUpgradeLevel.value = 0
+  popupSpeedOtherUpgradeLevel.value = 0
   cookCount.value = 0
+  clickPowerUpgradeLevel.value = 0
+  cookCpsUpgradeLevel.value = 0
+  factoryCpsUpgradeLevel.value = 0
+  bankDecayDelayUpgradeLevel.value = 0
+  rareChanceUpgradeLevel.value = 0
+  manualChickenClicks.value = 0
+  totalCookProduced.value = 0
+  totalFactoryProduced.value = 0
+  totalBankDeposited.value = 0
+  bankDecayDelayRemainingMs = bankDecayBaseDelayMs
+  isOtherUpgradesOpen.value = false
   rainbowCycleHue = 0
   rebirthMenu.value.visible = false
   syncRenderedChickens()
@@ -707,7 +950,8 @@ const createSavePayload = () => {
     rebirthChickens: rebirthChickens.value,
     rebirthUpgrades: { ...rebirthUpgrades.value },
     hasChickenBreastUnlock: hasChickenBreastUnlock.value,
-    popupSpeedUpgradeLevel: popupSpeedUpgradeLevel.value,
+    popupSpeedOtherUpgradeLevel: popupSpeedOtherUpgradeLevel.value,
+    popupSpeedUpgradeLevel: popupSpeedOtherUpgradeLevel.value,
     cookCount: cookCount.value,
     chickenCap: chickenCap.value,
     areCollisionsEnabled: areCollisionsEnabled.value,
@@ -719,6 +963,16 @@ const createSavePayload = () => {
     chickenHueShift: chickenHueShift.value,
     rainbowCycleEnabled: rainbowCycleEnabled.value,
     bankEfficiencyPercent: bankEfficiencyPercent.value,
+    manualChickenClicks: manualChickenClicks.value,
+    rarePopupShownCount: rarePopupShownCount.value,
+    totalCookProduced: totalCookProduced.value,
+    totalFactoryProduced: totalFactoryProduced.value,
+    totalBankDeposited: totalBankDeposited.value,
+    clickPowerUpgradeLevel: clickPowerUpgradeLevel.value,
+    cookCpsUpgradeLevel: cookCpsUpgradeLevel.value,
+    factoryCpsUpgradeLevel: factoryCpsUpgradeLevel.value,
+    bankDecayDelayUpgradeLevel: bankDecayDelayUpgradeLevel.value,
+    rareChanceUpgradeLevel: rareChanceUpgradeLevel.value,
   }
 }
 
@@ -855,7 +1109,11 @@ const applySavedProgress = (savedState) => {
     }
   }
   hasChickenBreastUnlock.value = Boolean(savedState.hasChickenBreastUnlock)
-  popupSpeedUpgradeLevel.value = normalizePositiveInteger(savedState.popupSpeedUpgradeLevel, 0, 0)
+  popupSpeedOtherUpgradeLevel.value = normalizePositiveInteger(
+    savedState.popupSpeedOtherUpgradeLevel ?? savedState.popupSpeedUpgradeLevel,
+    0,
+    0,
+  )
   cookCount.value = normalizePositiveInteger(savedState.cookCount, 0, 0)
   chickenCap.value = normalizeCapValue(savedState.chickenCap)
   areCollisionsEnabled.value = savedState.areCollisionsEnabled !== false
@@ -866,12 +1124,26 @@ const applySavedProgress = (savedState) => {
   factoryCount.value = normalizePositiveInteger(savedState.factoryCount, 0, 0)
   chickenHueShift.value = normalizePositiveInteger(savedState.chickenHueShift, 0, 0, 360)
   rainbowCycleEnabled.value = Boolean(savedState.rainbowCycleEnabled)
+  manualChickenClicks.value = normalizePositiveInteger(savedState.manualChickenClicks, 0, 0)
+  rarePopupShownCount.value = normalizePositiveInteger(savedState.rarePopupShownCount, 0, 0)
+  totalCookProduced.value = normalizePositiveInteger(savedState.totalCookProduced, 0, 0)
+  totalFactoryProduced.value = normalizePositiveInteger(savedState.totalFactoryProduced, 0, 0)
+  totalBankDeposited.value = normalizePositiveInteger(savedState.totalBankDeposited, 0, 0)
+  clickPowerUpgradeLevel.value = normalizePositiveInteger(savedState.clickPowerUpgradeLevel, 0, 0, 10)
+  cookCpsUpgradeLevel.value = normalizePositiveInteger(savedState.cookCpsUpgradeLevel, 0, 0, 5)
+  factoryCpsUpgradeLevel.value = normalizePositiveInteger(savedState.factoryCpsUpgradeLevel, 0, 0, 5)
+  bankDecayDelayUpgradeLevel.value = normalizePositiveInteger(savedState.bankDecayDelayUpgradeLevel, 0, 0, 5)
+  rareChanceUpgradeLevel.value = normalizePositiveInteger(savedState.rareChanceUpgradeLevel, 0, 0, 3)
+
   // Restore bank efficiency percent if present, else default to 35 + cookCount (capped at 90)
   if (typeof savedState.bankEfficiencyPercent === 'number') {
     bankEfficiencyPercent.value = Math.min(90, Math.max(35, savedState.bankEfficiencyPercent))
   } else {
     bankEfficiencyPercent.value = Math.min(90, 35 + cookCount.value)
   }
+
+  bankDecayDelayRemainingMs = bankDecayDelayMs.value
+  shouldFlashRightMenu.value = shouldShowRightMenuAffordHint.value
 
   syncSoundPreference()
   enforceChickenCap()
@@ -1048,6 +1320,8 @@ const handleChickenClick = async (chicken, event) => {
   if (chicken.type === 'breast') {
     clickValue = 2
   }
+  clickValue *= clickPowerMultiplier.value
+  manualChickenClicks.value += 1
 
   addChicken(clickValue)
 
@@ -1164,18 +1438,52 @@ const animateChickens = (timestamp) => {
   }
 
   if (bankChickenStored.value > 0) {
-    bankChickenStored.value *= Math.pow(0.99, deltaSeconds / 60)
+    if (bankDecayDelayRemainingMs > 0) {
+      bankDecayDelayRemainingMs = Math.max(0, bankDecayDelayRemainingMs - frameMs)
+    } else {
+      bankChickenStored.value *= Math.pow(0.99, deltaSeconds / 60)
+    }
   }
 
-  const cookRate = cookOutputPerSecond.value + bankCpsGeneration.value + factoryCpsGeneration.value
-  if (cookRate > 0) {
-    const produced = cookRate * deltaSeconds + cookProductionCarry
-    const producedWhole = Math.floor(produced)
-    cookProductionCarry = produced - producedWhole
+  let totalProducedWhole = 0
 
-    if (producedWhole > 0) {
-      addChicken(producedWhole)
+  const cookRate = cookOutputPerSecond.value
+  if (cookRate > 0) {
+    const cookProduced = cookRate * deltaSeconds + cookProductionCarry
+    const cookProducedWhole = Math.floor(cookProduced)
+    cookProductionCarry = cookProduced - cookProducedWhole
+
+    if (cookProducedWhole > 0) {
+      totalCookProduced.value += cookProducedWhole
+      totalProducedWhole += cookProducedWhole
     }
+  }
+
+  const factoryRate = factoryCpsGeneration.value
+  if (factoryRate > 0) {
+    const factoryProduced = factoryRate * deltaSeconds + factoryProductionCarry
+    const factoryProducedWhole = Math.floor(factoryProduced)
+    factoryProductionCarry = factoryProduced - factoryProducedWhole
+
+    if (factoryProducedWhole > 0) {
+      totalFactoryProduced.value += factoryProducedWhole
+      totalProducedWhole += factoryProducedWhole
+    }
+  }
+
+  const bankRate = bankCpsGeneration.value
+  if (bankRate > 0) {
+    const bankProduced = bankRate * deltaSeconds + bankProductionCarry
+    const bankProducedWhole = Math.floor(bankProduced)
+    bankProductionCarry = bankProduced - bankProducedWhole
+
+    if (bankProducedWhole > 0) {
+      totalProducedWhole += bankProducedWhole
+    }
+  }
+
+  if (totalProducedWhole > 0) {
+    addChicken(totalProducedWhole)
   }
 
   const elapsedSeconds = Math.max(1, (timestamp - sessionStartTimestamp) / 1000)
@@ -1281,6 +1589,10 @@ onMounted(() => {
   sessionStartTimestamp = performance.now()
   totalChickenEarned = 0
   cookProductionCarry = 0
+  bankProductionCarry = 0
+  factoryProductionCarry = 0
+  bankDecayDelayRemainingMs = bankDecayDelayMs.value
+  shouldFlashRightMenu.value = shouldShowRightMenuAffordHint.value
   syncRenderedChickens()
 
   try {
@@ -1338,6 +1650,12 @@ onMounted(() => {
   document.addEventListener('gesturestart', gestureStartHandler, { passive: false })
   document.addEventListener('gesturechange', gestureChangeHandler, { passive: false })
 
+  // Track document visibility to avoid blocking background music
+  handleVisibilityChange = () => {
+    isDocumentVisible.value = !document.hidden
+  }
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+
   animationFrameId = window.requestAnimationFrame(animateChickens)
 })
 
@@ -1357,6 +1675,7 @@ onUnmounted(() => {
   window.removeEventListener('pointermove', handlePointerMove)
   window.removeEventListener('pointerup', handlePointerUp)
   window.removeEventListener('pointercancel', handlePointerUp)
+  window.removeEventListener('visibilitychange', handleVisibilityChange)
 
   if (window.visualViewport) {
     window.visualViewport.removeEventListener('resize', updateViewport)
@@ -1391,11 +1710,21 @@ watch(
     isSoundEnabled,
     rebirthCount,
     hasChickenBreastUnlock,
-    popupSpeedUpgradeLevel,
+    popupSpeedOtherUpgradeLevel,
     cookCount,
     chickenCap,
     areCollisionsEnabled,
     isPerformanceMode,
+    manualChickenClicks,
+    rarePopupShownCount,
+    clickPowerUpgradeLevel,
+    cookCpsUpgradeLevel,
+    factoryCpsUpgradeLevel,
+    bankDecayDelayUpgradeLevel,
+    rareChanceUpgradeLevel,
+    totalCookProduced,
+    totalFactoryProduced,
+    totalBankDeposited,
   ],
   () => {
     writeAutosave()
@@ -1420,7 +1749,7 @@ watch(totalChickenCount, () => {
     </div>
 
     <div class="hud">
-      <button class="menu-button" type="button" aria-label="Open menu" @click="toggleMenu">☰</button>
+      <button :class="['menu-button', { 'flash-button-white': shouldFlashRightMenu }]" type="button" aria-label="Open menu" @click="toggleMenu">☰</button>
       <button class="menu-button help-button" type="button" aria-label="Open help" @click="openHelp">?</button>
       <div class="counter">Chicken: {{ chickenCount }}</div>
     </div>
@@ -1431,15 +1760,14 @@ watch(totalChickenCount, () => {
       <div class="save-dialog help-dialog">
         <div class="save-title">Quick Help</div>
         <div class="help-list">
-          <div class="save-text"><strong>Chicken click values:</strong> Wing = 1 chicken/click, Breast = 2 chickens/click.</div>
-          <div class="save-text"><strong>Chicken per popup upgrade:</strong> CPP gain scales by formula and is multiplied by rebirth multiplier.</div>
-          <div class="save-text"><strong>Auto-click popup:</strong> Instantly clicks each popup once (same reward as manual click).</div>
-          <div class="save-text"><strong>Factory:</strong> Each factory generates 2 × rebirthMultiplier chickens/s.</div>
-          <div class="save-text"><strong>Cook:</strong> Each cook generates (1 + rebirthCount) chickens/s and +1% bank efficiency (cap 90%).</div>
-          <div class="save-text"><strong>Bank:</strong> CPS = stored × bankEfficiency × 0.01; stored amount decays 1% per minute.</div>
-          <div class="save-text"><strong>Left menu:</strong> Unlock it by rebirthing once or buying the Bank.</div>
-          <div class="save-text"><strong>Rendered cap:</strong> Manual cap range is 25 to 2000 chickens.</div>
-          <div class="save-text"><strong>Rebirth:</strong> +0.5× multiplier, or other upgrades. Requires Rebirth Chicken. (Gained when rebirthing, can be used on first rebirth)</div>
+          <div class="save-text"><strong>How to Play:</strong> Click chickens to earn. Use chickens to buy Cooks and Factories that generate chickens passively. Spend time clicking popups for instant rewards.</div>
+          <div class="save-text"><strong>Clicks:</strong> Wing = 1, Breast = 2. Earn more per click as you progress.</div>
+          <div class="save-text"><strong>Popups:</strong> Spawn every ~3s. Click for instant chickens. Types: Normal (base), Rare ({{ (baseRarePopupChance * 100).toFixed(2) }}%, {{ rarePopupMultiplier }}x), Extremely Rare ({{ (extremelyRarePopupChance * 100).toFixed(4) }}%, {{ extremelyRarePopupMultiplier }}x).</div>
+          <div class="save-text"><strong>Cooks:</strong> Cost {{ cookBaseCost }}-{{ getCookCost(5) }} each. Generate (1 + rebirth count) × efficiency chickens/s. Each cook adds +1% bank efficiency (max 90%).</div>
+          <div class="save-text"><strong>Factory:</strong> Cost {{ factoryUnlockCost }}-{{ getFactoryCost(5) }} each. Generate 2 × rebirth multiplier × efficiency chickens/s.</div>
+          <div class="save-text"><strong>Bank:</strong> Deposit chickens for passive income (CPS = stored × efficiency × 0.01). Decays 1%/min after delay. Unlocked as you progress.</div>
+          <div class="save-text"><strong>Rebirth:</strong> Reset progress to gain +0.5× multiplier + choose permanent upgrades. Unlocks as you progress. Left menu available after first rebirth.</div>
+          <div class="save-text"><strong>Mobile:</strong> First tap to reveal upgrade details, second tap to buy. Sound mutes when app is backgrounded.</div>
         </div>
         <div class="prompt-actions">
           <button type="button" class="save-button" @click="closeHelp">Close</button>
@@ -1460,6 +1788,7 @@ watch(totalChickenCount, () => {
     <div v-if="isMenuOpen" class="menu-panel">
       <div class="menu-title">Upgrades</div>
       <div class="menu-label">Current level: {{ upgradeLevel }}</div>
+      <div class="menu-label">Rare shown: {{ rarePopupShownCount }} | Rare chance: {{ (currentRarePopupChance * 100).toFixed(2) }}%</div>
 
       <button
         type="button"
@@ -1531,13 +1860,11 @@ watch(totalChickenCount, () => {
         </button>
 
         <button
-          v-if="!isPopupSpeedFullyUpgraded"
           type="button"
           class="upgrade-button"
-          :disabled="!canAffordPopupSpeedUpgrade"
-          @click="upgradePopupSpeed"
+          @click="toggleOtherUpgrades"
         >
-          Faster Popups ({{ (currentPopupIntervalMs / 1000).toFixed(2) }}s) — Cost: {{ nextPopupSpeedCost }}
+          Other Upgrades
         </button>
 
         <label class="menu-label" for="chicken-cap-input">Rendered chicken cap</label>
@@ -1623,6 +1950,120 @@ watch(totalChickenCount, () => {
           </svg>
           Repository
         </button>
+      </div>
+    </div>
+
+    <div v-if="isOtherUpgradesOpen" class="save-overlay" @click.self="closeOtherUpgrades">
+      <div class="save-dialog help-dialog other-upgrades-dialog">
+        <div class="save-title">Other Upgrades</div>
+        <div class="menu-label">Unlocks appear when requirements are met.</div>
+        <div class="other-upgrade-grid">
+          <button
+            v-if="!isPopupSpeedFullyUpgraded"
+            type="button"
+            class="upgrade-card"
+            :class="{ 'upgrade-card--hovered': hoveredUpgradeId === 'popup-speed' }"
+            :disabled="!canAffordPopupSpeedUpgrade"
+            @click="handleUpgradeCardClick('popup-speed', upgradePopupSpeed)"
+            @mouseenter="hoveredUpgradeId = 'popup-speed'"
+            @mouseleave="hoveredUpgradeId = null"
+          >
+            <div class="upgrade-card-icon">[>>]</div>
+            <div class="upgrade-card-details" v-if="hoveredUpgradeId === 'popup-speed'">
+              <div class="upgrade-card-title">Faster Popups</div>
+              <div class="upgrade-card-desc">{{ (currentPopupIntervalMs / 1000).toFixed(2) }}s &mdash; {{ nextPopupSpeedCost }}</div>
+            </div>
+          </button>
+
+          <button
+            v-if="isClickPowerUpgradeUnlocked && clickPowerUpgradeLevel < 10"
+            type="button"
+            class="upgrade-card"
+            :class="{ 'upgrade-card--hovered': hoveredUpgradeId === 'click-power' }"
+            :disabled="!canAffordClickPowerUpgrade"
+            @click="handleUpgradeCardClick('click-power', upgradeClickPower)"
+            @mouseenter="hoveredUpgradeId = 'click-power'"
+            @mouseleave="hoveredUpgradeId = null"
+          >
+            <div class="upgrade-card-icon">[CLK]</div>
+            <div class="upgrade-card-details" v-if="hoveredUpgradeId === 'click-power'">
+              <div class="upgrade-card-title">Click Power</div>
+              <div class="upgrade-card-desc">{{ nextClickPowerCost }}</div>
+            </div>
+          </button>
+
+          <button
+            v-if="isCookUpgradeUnlocked && cookCpsUpgradeLevel < 5"
+            type="button"
+            class="upgrade-card"
+            :class="{ 'upgrade-card--hovered': hoveredUpgradeId === 'cook-cps' }"
+            :disabled="!canAffordCookCpsUpgrade"
+            @click="handleUpgradeCardClick('cook-cps', upgradeCookCps)"
+            @mouseenter="hoveredUpgradeId = 'cook-cps'"
+            @mouseleave="hoveredUpgradeId = null"
+          >
+            <div class="upgrade-card-icon">[C]</div>
+            <div class="upgrade-card-details" v-if="hoveredUpgradeId === 'cook-cps'">
+              <div class="upgrade-card-title">Cook Eff.</div>
+              <div class="upgrade-card-desc">{{ nextCookCpsUpgradeCost }}</div>
+            </div>
+          </button>
+
+          <button
+            v-if="isFactoryUpgradeUnlocked && factoryCpsUpgradeLevel < 5"
+            type="button"
+            class="upgrade-card"
+            :class="{ 'upgrade-card--hovered': hoveredUpgradeId === 'factory-cps' }"
+            :disabled="!canAffordFactoryCpsUpgrade"
+            @click="handleUpgradeCardClick('factory-cps', upgradeFactoryCps)"
+            @mouseenter="hoveredUpgradeId = 'factory-cps'"
+            @mouseleave="hoveredUpgradeId = null"
+          >
+            <div class="upgrade-card-icon">[F]</div>
+            <div class="upgrade-card-details" v-if="hoveredUpgradeId === 'factory-cps'">
+              <div class="upgrade-card-title">Factory Eff.</div>
+              <div class="upgrade-card-desc">{{ nextFactoryCpsUpgradeCost }}</div>
+            </div>
+          </button>
+
+          <button
+            v-if="isBankDelayUpgradeUnlocked && bankDecayDelayUpgradeLevel < 5"
+            type="button"
+            class="upgrade-card"
+            :class="{ 'upgrade-card--hovered': hoveredUpgradeId === 'bank-delay' }"
+            :disabled="!canAffordBankDelayUpgrade"
+            @click="handleUpgradeCardClick('bank-delay', upgradeBankDecayDelay)"
+            @mouseenter="hoveredUpgradeId = 'bank-delay'"
+            @mouseleave="hoveredUpgradeId = null"
+          >
+            <div class="upgrade-card-icon">[$]</div>
+            <div class="upgrade-card-details" v-if="hoveredUpgradeId === 'bank-delay'">
+              <div class="upgrade-card-title">Bank Delay</div>
+              <div class="upgrade-card-desc">{{ nextBankDelayUpgradeCost }}</div>
+            </div>
+          </button>
+
+          <button
+            v-if="isRareChanceUpgradeUnlocked && rareChanceUpgradeLevel < 3"
+            type="button"
+            class="upgrade-card"
+            :class="{ 'upgrade-card--hovered': hoveredUpgradeId === 'rare-chance' }"
+            :disabled="!canAffordRareChanceUpgrade"
+            @click="handleUpgradeCardClick('rare-chance', upgradeRareChance)"
+            @mouseenter="hoveredUpgradeId = 'rare-chance'"
+            @mouseleave="hoveredUpgradeId = null"
+          >
+            <div class="upgrade-card-icon">[*]</div>
+            <div class="upgrade-card-details" v-if="hoveredUpgradeId === 'rare-chance'">
+              <div class="upgrade-card-title">Rare Chance</div>
+              <div class="upgrade-card-desc">{{ nextRareChanceUpgradeCost }}</div>
+            </div>
+          </button>
+        </div>
+
+        <div class="prompt-actions">
+          <button type="button" class="save-button" @click="closeOtherUpgrades">Close</button>
+        </div>
       </div>
     </div>
 
@@ -1772,14 +2213,14 @@ watch(totalChickenCount, () => {
     <img
       v-if="isPopupVisible"
       :key="popupCycleKey"
-      :class="['popup-image', { 'popup-image--rare': isRarePopupActive }]"
+      :class="['popup-image', { 'popup-image--rare': isRarePopupActive, 'popup-image--extreme': isExtremePopupActive }]"
       :src="popupImage"
-      :alt="isRarePopupActive ? 'BCAG popup' : 'BCA popup'"
+      :alt="isExtremePopupActive ? 'BCA extreme popup' : (isRarePopupActive ? 'BCAG popup' : 'BCA popup')"
       @click="handlePopupClick"
     />
 
-    <div v-if="isPopupVisible && isRarePopupActive" class="rare-popup-label">
-      {{ rarePopupMultiplier }}x
+    <div v-if="isPopupVisible && hasPopupTierBonus" :class="['rare-popup-label', { 'rare-popup-label--extreme': isExtremePopupActive }]">
+      {{ activePopupMultiplierLabel }}
     </div>
 
     <div
@@ -2021,6 +2462,71 @@ watch(totalChickenCount, () => {
   cursor: not-allowed;
 }
 
+.upgrade-card {
+  aspect-ratio: 1;
+  border: 1px solid #4a4a4a;
+  background: rgba(32, 32, 32, 0.95);
+  color: #f7f7f7;
+  border-radius: 0.6rem;
+  padding: 0.4rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.upgrade-card:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.upgrade-card:not(:disabled):hover,
+.upgrade-card:not(:disabled).upgrade-card--hovered {
+  border-color: #6a6a6a;
+  background: rgba(50, 50, 50, 0.98);
+}
+
+.upgrade-card-icon {
+  font-size: 1.8rem;
+  font-weight: 700;
+  letter-spacing: -0.05em;
+  transition: opacity 0.2s ease;
+}
+
+.upgrade-card--hovered .upgrade-card-icon {
+  opacity: 0;
+}
+
+.upgrade-card-details {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0.35rem;
+  background: rgba(20, 20, 20, 0.95);
+  border-radius: 0.55rem;
+  animation: fadeIn 0.15s ease;
+}
+
+.upgrade-card-title {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #e0e0e0;
+  line-height: 1.1;
+}
+
+.upgrade-card-desc {
+  font-size: 0.6rem;
+  color: #a8a8a8;
+  margin-top: 0.15rem;
+  line-height: 1.15;
+}
+
 .rebirth-button {
   border-color: #5a4a3a;
   background: rgba(50, 40, 25, 0.95);
@@ -2159,6 +2665,28 @@ watch(totalChickenCount, () => {
   gap: 0.35rem;
 }
 
+.other-upgrades-dialog {
+  gap: 0.8rem;
+}
+
+.other-upgrade-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.4rem;
+}
+
+@media (max-width: 768px) {
+  .other-upgrade-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .other-upgrade-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 .save-title {
   color: #f1f1f1;
   font-size: 0.95rem;
@@ -2245,6 +2773,11 @@ watch(totalChickenCount, () => {
   animation: popup-in 220ms ease-out, rare-shimmer 1.1s ease-in-out infinite;
 }
 
+.popup-image--extreme {
+  filter: saturate(1.55) brightness(1.35) drop-shadow(0 0 1.4rem rgba(255, 255, 255, 0.95));
+  animation: popup-in 220ms ease-out, extreme-shimmer 0.9s ease-in-out infinite;
+}
+
 .rare-popup-label {
   position: fixed;
   z-index: 41;
@@ -2261,6 +2794,13 @@ watch(totalChickenCount, () => {
   letter-spacing: 0.03em;
   pointer-events: none;
   text-shadow: 0 0 8px rgba(255, 231, 163, 0.7);
+}
+
+.rare-popup-label--extreme {
+  border-color: #dfe7ff;
+  background: linear-gradient(135deg, rgba(120, 126, 160, 0.95), rgba(230, 236, 255, 0.92));
+  color: #0a101f;
+  text-shadow: none;
 }
 
 @media (max-width: 767px) {
@@ -2355,13 +2895,31 @@ watch(totalChickenCount, () => {
   }
 }
 
-@keyframes flash-glow {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.7);
+@keyframes menu-white-flash {
+  0%,
+  100% {
+    color: #f1f1f1;
+    border-color: #2c2c2c;
+    background: rgba(15, 15, 15, 0.92);
+    transform: scale(1);
   }
 
   50% {
-    box-shadow: 0 0 10px 4px rgba(74, 222, 128, 0.3);
+    color: #ffffff;
+    border-color: #ffffff;
+    background: rgba(46, 46, 46, 0.95);
+    transform: scale(1.04);
+  }
+}
+
+@keyframes extreme-shimmer {
+  0%,
+  100% {
+    filter: saturate(1.4) brightness(1.2) drop-shadow(0 0 1rem rgba(220, 230, 255, 0.85));
+  }
+
+  50% {
+    filter: saturate(1.75) brightness(1.45) drop-shadow(0 0 1.55rem rgba(255, 255, 255, 1));
   }
 }
 
@@ -2376,7 +2934,8 @@ watch(totalChickenCount, () => {
   z-index: 30;
 }
 
-.flash-button {
-  animation: flash-glow 1s ease-in-out infinite;
+.flash-button,
+.flash-button-white {
+  animation: menu-white-flash 1s ease-in-out infinite;
 }
 </style>
