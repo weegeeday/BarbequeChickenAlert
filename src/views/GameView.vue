@@ -75,6 +75,7 @@ const isHelpOpen = ref(false)
 const isOtherUpgradesOpen = ref(false)
 const shouldFlashRightMenu = ref(false)
 const hoveredUpgradeId = ref(null)
+const isTouchInputDevice = ref(false)
 const manualChickenClicks = ref(0)
 const isDocumentVisible = ref(true)
 const rarePopupShownCount = ref(0)
@@ -562,10 +563,26 @@ const closeOtherUpgrades = () => {
   isOtherUpgradesOpen.value = false
 }
 
-const handleUpgradeCardClick = (cardId, purchaseHandler) => {
-  const isMobile = window.innerWidth <= 480
+const handleUpgradeCardMouseEnter = (cardId) => {
+  if (isTouchInputDevice.value) {
+    return
+  }
 
-  if (isMobile) {
+  hoveredUpgradeId.value = cardId
+}
+
+const handleUpgradeCardMouseLeave = () => {
+  if (isTouchInputDevice.value) {
+    return
+  }
+
+  hoveredUpgradeId.value = null
+}
+
+const handleUpgradeCardClick = (cardId, purchaseHandler) => {
+  const isTouchInteraction = isTouchInputDevice.value
+
+  if (isTouchInteraction) {
     if (hoveredUpgradeId.value === cardId) {
       purchaseHandler()
       hoveredUpgradeId.value = null
@@ -1584,6 +1601,10 @@ const animateChickens = (timestamp) => {
 onMounted(() => {
   window.forceBCAGPopup = forceRarePopup
 
+  isTouchInputDevice.value = window.matchMedia('(hover: none), (pointer: coarse)').matches
+    || navigator.maxTouchPoints > 0
+    || 'ontouchstart' in window
+
   document.title = 'Barbeque Chicken Alert'
   updateViewport()
   sessionStartTimestamp = performance.now()
@@ -1626,6 +1647,8 @@ onMounted(() => {
 
   // Prevent double-tap zoom on iOS
   touchStartHandler = (e) => {
+    isTouchInputDevice.value = true
+
     if (e.target instanceof Element && e.target.closest(iOSInteractiveTouchSelector)) {
       touchStartHandler.lastTouchTime = Date.now()
       return
@@ -1965,8 +1988,8 @@ watch(totalChickenCount, () => {
             :class="{ 'upgrade-card--hovered': hoveredUpgradeId === 'popup-speed' }"
             :disabled="!canAffordPopupSpeedUpgrade"
             @click="handleUpgradeCardClick('popup-speed', upgradePopupSpeed)"
-            @mouseenter="hoveredUpgradeId = 'popup-speed'"
-            @mouseleave="hoveredUpgradeId = null"
+            @mouseenter="handleUpgradeCardMouseEnter('popup-speed')"
+            @mouseleave="handleUpgradeCardMouseLeave()"
           >
             <div class="upgrade-card-icon">[>>]</div>
             <div class="upgrade-card-details" v-if="hoveredUpgradeId === 'popup-speed'">
@@ -1982,8 +2005,8 @@ watch(totalChickenCount, () => {
             :class="{ 'upgrade-card--hovered': hoveredUpgradeId === 'click-power' }"
             :disabled="!canAffordClickPowerUpgrade"
             @click="handleUpgradeCardClick('click-power', upgradeClickPower)"
-            @mouseenter="hoveredUpgradeId = 'click-power'"
-            @mouseleave="hoveredUpgradeId = null"
+            @mouseenter="handleUpgradeCardMouseEnter('click-power')"
+            @mouseleave="handleUpgradeCardMouseLeave()"
           >
             <div class="upgrade-card-icon">[CLK]</div>
             <div class="upgrade-card-details" v-if="hoveredUpgradeId === 'click-power'">
@@ -1999,8 +2022,8 @@ watch(totalChickenCount, () => {
             :class="{ 'upgrade-card--hovered': hoveredUpgradeId === 'cook-cps' }"
             :disabled="!canAffordCookCpsUpgrade"
             @click="handleUpgradeCardClick('cook-cps', upgradeCookCps)"
-            @mouseenter="hoveredUpgradeId = 'cook-cps'"
-            @mouseleave="hoveredUpgradeId = null"
+            @mouseenter="handleUpgradeCardMouseEnter('cook-cps')"
+            @mouseleave="handleUpgradeCardMouseLeave()"
           >
             <div class="upgrade-card-icon">[C]</div>
             <div class="upgrade-card-details" v-if="hoveredUpgradeId === 'cook-cps'">
@@ -2016,8 +2039,8 @@ watch(totalChickenCount, () => {
             :class="{ 'upgrade-card--hovered': hoveredUpgradeId === 'factory-cps' }"
             :disabled="!canAffordFactoryCpsUpgrade"
             @click="handleUpgradeCardClick('factory-cps', upgradeFactoryCps)"
-            @mouseenter="hoveredUpgradeId = 'factory-cps'"
-            @mouseleave="hoveredUpgradeId = null"
+            @mouseenter="handleUpgradeCardMouseEnter('factory-cps')"
+            @mouseleave="handleUpgradeCardMouseLeave()"
           >
             <div class="upgrade-card-icon">[F]</div>
             <div class="upgrade-card-details" v-if="hoveredUpgradeId === 'factory-cps'">
@@ -2033,8 +2056,8 @@ watch(totalChickenCount, () => {
             :class="{ 'upgrade-card--hovered': hoveredUpgradeId === 'bank-delay' }"
             :disabled="!canAffordBankDelayUpgrade"
             @click="handleUpgradeCardClick('bank-delay', upgradeBankDecayDelay)"
-            @mouseenter="hoveredUpgradeId = 'bank-delay'"
-            @mouseleave="hoveredUpgradeId = null"
+            @mouseenter="handleUpgradeCardMouseEnter('bank-delay')"
+            @mouseleave="handleUpgradeCardMouseLeave()"
           >
             <div class="upgrade-card-icon">[$]</div>
             <div class="upgrade-card-details" v-if="hoveredUpgradeId === 'bank-delay'">
@@ -2050,8 +2073,8 @@ watch(totalChickenCount, () => {
             :class="{ 'upgrade-card--hovered': hoveredUpgradeId === 'rare-chance' }"
             :disabled="!canAffordRareChanceUpgrade"
             @click="handleUpgradeCardClick('rare-chance', upgradeRareChance)"
-            @mouseenter="hoveredUpgradeId = 'rare-chance'"
-            @mouseleave="hoveredUpgradeId = null"
+            @mouseenter="handleUpgradeCardMouseEnter('rare-chance')"
+            @mouseleave="handleUpgradeCardMouseLeave()"
           >
             <div class="upgrade-card-icon">[*]</div>
             <div class="upgrade-card-details" v-if="hoveredUpgradeId === 'rare-chance'">
