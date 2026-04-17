@@ -55,7 +55,7 @@ const hasFactoryUnlock = ref(false)
 const factoryCount = ref(0)
 const cookCount = ref(0)
 const isUnlimitedCap = ref(false)
-const chickenCap = ref(300)
+const chickenCap = ref(100)
 const fpsCounter = ref(0)
 const averageCps = ref(0)
 const totalChickenCount = ref(0)
@@ -95,9 +95,12 @@ const iOSInteractiveTouchSelector = '.menu-panel, .left-menu-panel, .hud, .hud-l
 
 let popupTimerId = null
 let animationFrameId = null
+let renderSyncFrameId = null
 let previousTimestamp = 0
 let chickenIdSeed = 0
+let floatingNumberIdSeed = 0
 let activeDragId = null
+let collisionFrameCounter = 0
 let lowFpsDurationMs = 0
 let stableFpsDurationMs = 0
 let smoothedFps = 60
@@ -108,6 +111,9 @@ let totalChickenEarned = 0
 let rainbowCycleHue = 0
 let bankDecayDelayRemainingMs = 60000
 let sessionStartTimestamp = performance.now()
+let collisionWorker = null
+let collisionWorkerPending = false
+let collisionWorkerRequestId = 0
 let touchStartHandler = null
 let gestureStartHandler = null
 let gestureChangeHandler = null
@@ -357,12 +363,38 @@ const shouldShowRightMenuAffordHint = computed(() => {
   return rebirthCount.value === 0 && upgradeLevel.value === 1 && canAffordUpgrade.value
 })
 const activePopupMultiplierLabel = computed(() => `${activePopupMultiplier.value}x`)
+const maxFloatingNumbers = computed(() => {
+  if (isPerformanceMode.value) {
+    return 8
+  }
+
+  return isTouchInputDevice.value ? 12 : 18
+})
+const floatingNumberLifetimeMs = computed(() => {
+  return isPerformanceMode.value ? 700 : 950
+})
+const adaptiveRenderCap = computed(() => {
+  const manualCap = normalizeCapValue(chickenCap.value)
+
+  if (!isTouchInputDevice.value) {
+    return manualCap
+  }
+
+  let touchCap = viewportHeight.value < 720 ? 70 : viewportHeight.value < 860 ? 95 : 120
+
+  if (isPerformanceMode.value) {
+    touchCap = Math.max(45, Math.floor(touchCap * 0.75))
+  }
+
+  return Math.min(manualCap, touchCap)
+})
+
 const effectiveRenderLimit = computed(() => {
-  if (isUnlimitedCap.value) {
+  if (isUnlimitedCap.value && !isTouchInputDevice.value) {
     return totalChickenCount.value
   }
 
-  return Math.min(totalChickenCount.value, normalizeCapValue(chickenCap.value))
+  return Math.min(totalChickenCount.value, adaptiveRenderCap.value)
 })
 
 const randomBetween = (minimum, maximum) => {
@@ -384,7 +416,7 @@ const getChickenSize = () => {
 }
 
 const normalizeCapValue = (value) => {
-  const safeValue = Number.isFinite(value) ? value : 300
+  const safeValue = Number.isFinite(value) ? value : 100
   return Math.max(25, Math.min(2000, Math.round(safeValue)))
 }
 
@@ -402,6 +434,85 @@ const clampPosition = (chicken) => {
   const maxY = Math.max(0, viewportHeight.value - chicken.size)
   chicken.x = Math.max(0, Math.min(chicken.x, maxX))
   chicken.y = Math.max(0, Math.min(chicken.y, maxY))
+}
+
+const createCollisionWorkerSnapshot = () => {
+  return chickens.value.map((chicken) => ({
+    id: chicken.id,
+    x: chicken.x,
+    y: chicken.y,
+    size: chicken.size,
+    velocityX: chicken.velocityX,
+    velocityY: chicken.velocityY,
+    angularVelocity: chicken.angularVelocity,
+    isDragging: chicken.isDragging,
+  }))
+}
+
+const applyCollisionWorkerDeltas = (deltas) => {
+  if (!Array.isArray(deltas) || deltas.length === 0) {
+    return
+  }
+
+  deltas.forEach((delta) => {
+    const chicken = findChickenById(delta.id)
+    if (!chicken) {
+      return
+    }
+
+    chicken.x += delta.deltaX || 0
+    chicken.y += delta.deltaY || 0
+    chicken.velocityX += delta.deltaVelocityX || 0
+    chicken.velocityY += delta.deltaVelocityY || 0
+    chicken.angularVelocity += delta.deltaAngularVelocity || 0
+
+    clampPosition(chicken)
+  })
+}
+
+const initializeCollisionWorker = () => {
+  if (typeof Worker === 'undefined') {
+    return null
+  }
+
+  try {
+    const worker = new Worker(new URL('../workers/chickenCollisionWorker.js', import.meta.url), { type: 'module' })
+
+    worker.onmessage = (event) => {
+      const { requestId, deltas } = event.data || {}
+
+      if (typeof requestId !== 'number' || requestId !== collisionWorkerRequestId) {
+        return
+      }
+
+      collisionWorkerPending = false
+      applyCollisionWorkerDeltas(deltas)
+    }
+
+    worker.onerror = () => {
+      collisionWorkerPending = false
+    }
+
+    return worker
+  } catch {
+    return null
+  }
+}
+
+const requestCollisionWorkerStep = () => {
+  if (!collisionWorker || collisionWorkerPending) {
+    return false
+  }
+
+  collisionWorkerPending = true
+  collisionWorkerRequestId += 1
+
+  collisionWorker.postMessage({
+    requestId: collisionWorkerRequestId,
+    chickens: createCollisionWorkerSnapshot(),
+  })
+
+  return true
 }
 
 const playPopupAudio = async () => {
@@ -594,6 +705,17 @@ const syncRenderedChickens = () => {
   }
 }
 
+const scheduleRenderedChickenSync = () => {
+  if (renderSyncFrameId !== null) {
+    return
+  }
+
+  renderSyncFrameId = window.requestAnimationFrame(() => {
+    renderSyncFrameId = null
+    syncRenderedChickens()
+  })
+}
+
 const addChicken = (amount) => {
   if (amount <= 0) {
     return
@@ -601,7 +723,7 @@ const addChicken = (amount) => {
 
   totalChickenCount.value += amount
   totalChickenEarned += amount
-  syncRenderedChickens()
+  scheduleRenderedChickenSync()
 }
 
 const handlePopupClick = () => {
@@ -1415,20 +1537,25 @@ const handleChickenClick = async (chicken, event) => {
 
   addChicken(clickValue)
 
-  // Create floating number
-  const floatingId = Math.random()
+  const floatingId = ++floatingNumberIdSeed
   const floatingNumber = {
     id: floatingId,
     value: clickValue,
     x: event.clientX,
     y: event.clientY,
   }
-  floatingNumbers.value.push(floatingNumber)
 
-  // Remove after animation
+  floatingNumbers.value.push(floatingNumber)
+  if (floatingNumbers.value.length > maxFloatingNumbers.value) {
+    floatingNumbers.value.shift()
+  }
+
   window.setTimeout(() => {
-    floatingNumbers.value = floatingNumbers.value.filter(n => n.id !== floatingId)
-  }, 1000)
+    const index = floatingNumbers.value.findIndex((n) => n.id === floatingId)
+    if (index !== -1) {
+      floatingNumbers.value.splice(index, 1)
+    }
+  }, floatingNumberLifetimeMs.value)
 }
 
 const resolveChickenCollisions = () => {
@@ -1665,7 +1792,14 @@ const animateChickens = (timestamp) => {
   })
 
   if (areCollisionsEnabled.value) {
-    resolveChickenCollisions()
+    const collisionStep = isPerformanceMode.value ? 3 : (isTouchInputDevice.value ? 2 : 1)
+    collisionFrameCounter = (collisionFrameCounter + 1) % collisionStep
+
+    if (collisionFrameCounter === 0) {
+      if (!requestCollisionWorkerStep()) {
+        resolveChickenCollisions()
+      }
+    }
   }
 
   animationFrameId = window.requestAnimationFrame(animateChickens)
@@ -1688,6 +1822,7 @@ onMounted(() => {
   bankDecayDelayRemainingMs = bankDecayDelayMs.value
   shouldFlashRightMenu.value = shouldShowRightMenuAffordHint.value
   syncRenderedChickens()
+  collisionWorker = initializeCollisionWorker()
 
   try {
     const serializedSave = window.localStorage.getItem(saveStorageKey)
@@ -1775,6 +1910,15 @@ onUnmounted(() => {
   if (animationFrameId !== null) {
     window.cancelAnimationFrame(animationFrameId)
   }
+  if (renderSyncFrameId !== null) {
+    window.cancelAnimationFrame(renderSyncFrameId)
+  }
+
+  if (collisionWorker) {
+    collisionWorker.terminate()
+    collisionWorker = null
+    collisionWorkerPending = false
+  }
 
   window.removeEventListener('resize', updateViewport)
   window.removeEventListener('pointermove', handlePointerMove)
@@ -1837,7 +1981,7 @@ watch(
 )
 
 watch(totalChickenCount, () => {
-  syncRenderedChickens()
+  scheduleRenderedChickenSync()
 })
 </script>
 
