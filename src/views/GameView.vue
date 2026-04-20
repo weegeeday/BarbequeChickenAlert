@@ -1956,6 +1956,17 @@ watch(totalChickenCount, () => {
             </div>
           </div>
 
+        <div class="sponsor-link-wrap">
+          <iframe
+            class="sponsor-link-frame"
+            src="https://github.com/sponsors/weegeeday/button"
+            title="Sponsor weegeeday"
+            height="32"
+            width="114"
+            style="border: 0; border-radius: 6px;"
+          ></iframe>
+        </div>
+
         <div class="menu-actions">
           <button type="button" class="menu-action-button" @click="reportBug">Report bug</button>
           <button type="button" class="menu-action-button" @click="exportSaveFile">Export save</button>
@@ -2426,6 +2437,31 @@ watch(totalChickenCount, () => {
 .menu-actions {
   display: grid;
   gap: 0.45rem;
+}
+
+.sponsor-link-wrap {
+  margin-top: 0.35rem;
+  margin-bottom: 0.2rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(24, 24, 24, 0.9);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.sponsor-link-wrap:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.28);
+}
+
+.sponsor-link-frame {
+  display: block;
+  filter: drop-shadow(0 0.12rem 0.3rem rgba(0, 0, 0, 0.45));
 }
 
 .save-import-input {
