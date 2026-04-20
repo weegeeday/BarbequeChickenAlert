@@ -12,26 +12,6 @@ const router = createRouter({
     {
       path: '/home',
       redirect: '/',
-    },
-    {
-      path: '/menu',
-      name: 'menu',
-      component: () => import('../views/MenuListView.vue'),
-    },
-    {
-      path: '/corndog',
-      name: 'corndog',
-      component: () => import('../views/Corndog.vue'),
-    },
-    {
-      path: '/moai',
-      name: 'moai',
-      component: () => import('../views/Moai.vue'),
-    },
-    {
-      path: '/custom',
-      name: 'custom',
-      component: () => import('../views/Custom.vue'),
     }
   ],
 })
