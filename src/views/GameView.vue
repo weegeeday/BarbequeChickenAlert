@@ -88,6 +88,9 @@ const cookCpsUpgradeLevel = ref(0)
 const factoryCpsUpgradeLevel = ref(0)
 const bankDecayDelayUpgradeLevel = ref(0)
 const rareChanceUpgradeLevel = ref(0)
+const isFarmOpen = ref(false)
+const plants = ref([])
+const hasFarmUnlock = ref(false)
 const iOSInteractiveTouchSelector = '.menu-panel, .left-menu-panel, .hud, .hud-left, .save-dialog, .save-overlay, button, input, label, a'
 
 let popupTimerId = null
@@ -151,6 +154,99 @@ const getUpgradeCost = (level) => {
   return Math.max(1, Math.floor(1.5 * (level ** 3) + 1 + 1e-9))
 }
 
+const seedTypes = [
+  { id: 'click-power', name: 'Click Speed', growthTimeMs: 120000, maxBonus: 0.25, bonusType: 'clickPower' },
+  { id: 'cps-boost', name: 'CPS Boost', growthTimeMs: 180000, maxBonus: 0.3, bonusType: 'cpsMultiplier' },
+  { id: 'rare-chance', name: 'Rare Bloom', growthTimeMs: 240000, maxBonus: 0.5, bonusType: 'rareChanceBoost' },
+  { id: 'popup-speed', name: 'Fast Sprout', growthTimeMs: 90000, maxBonus: 0.2, bonusType: 'popupSpeedBoost' },
+]
+
+const plantIdSeed = ref(0)
+
+const createPlant = (seedTypeId) => {
+  const seed = seedTypes.find(s => s.id === seedTypeId)
+  if (!seed) return null
+  return {
+    id: plantIdSeed.value++,
+    seedTypeId,
+    plantedAtMs: Date.now(),
+    growthMs: 0,
+    peakStartMs: null,
+    decayStartMs: null,
+  }
+}
+
+const getPlantProgress = (plant) => {
+  const now = Date.now()
+  const seed = seedTypes.find(s => s.id === plant.seedTypeId)
+  if (!seed) return { phase: 'growing', progress: 0, effectiveBonus: 0 }
+
+  const elapsedMs = now - plant.plantedAtMs
+  if (elapsedMs < seed.growthTimeMs) {
+    return {
+      phase: 'growing',
+      progress: elapsedMs / seed.growthTimeMs,
+      effectiveBonus: 0,
+    }
+  }
+
+  if (!plant.peakStartMs) {
+    plant.peakStartMs = now
+    plant.decayStartMs = now + 20000
+  }
+
+  const decayElapsedMs = Math.max(0, now - plant.decayStartMs)
+  const decayDuration = 60000
+  const decayProgress = Math.min(1, decayElapsedMs / decayDuration)
+  const effectiveBonus = seed.maxBonus * (1 - decayProgress)
+
+  return {
+    phase: decayProgress >= 1 ? 'dead' : 'peak',
+    progress: 1 - decayProgress,
+    effectiveBonus: Math.max(0, effectiveBonus),
+  }
+}
+
+const applyPlantBonuses = () => {
+  let clickPowerBonus = 0
+  let cpsMultiplier = 1
+  let rareChanceBonus = 0
+  let popupSpeedBonus = 0
+
+  plants.value.forEach((plant) => {
+    const { phase, effectiveBonus } = getPlantProgress(plant)
+    if (phase === 'dead') return
+
+    const seed = seedTypes.find(s => s.id === plant.seedTypeId)
+    if (!seed) return
+
+    if (seed.bonusType === 'clickPower') {
+      clickPowerBonus += effectiveBonus
+    } else if (seed.bonusType === 'cpsMultiplier') {
+      cpsMultiplier *= 1 + effectiveBonus
+    } else if (seed.bonusType === 'rareChanceBoost') {
+      rareChanceBonus += effectiveBonus
+    } else if (seed.bonusType === 'popupSpeedBoost') {
+      popupSpeedBonus += effectiveBonus
+    }
+  })
+
+  plants.value = plants.value.filter((plant) => {
+    const { phase } = getPlantProgress(plant)
+    return phase !== 'dead'
+  })
+
+  return { clickPowerBonus, cpsMultiplier, rareChanceBonus, popupSpeedBonus }
+}
+
+const removePlant = (plantId) => {
+  plants.value = plants.value.filter((p) => p.id !== plantId)
+}
+
+const toggleFarm = () => {
+  isFarmOpen.value = !isFarmOpen.value
+}
+
 const chickenCount = computed(() => totalChickenCount.value)
 const nextUpgradeGain = computed(() => getUpgradeGain(upgradeLevel.value + 1))
 const nextUpgradeCost = computed(() => getUpgradeCost(upgradeLevel.value))
@@ -159,6 +255,7 @@ const autoPopupClickUpgradeCost = 1000
 const chickenBreastUnlockCost = 200
 const bankUnlockCost = 5000
 const factoryUnlockCost = 300
+const farmUnlockCost = 10000
 const cookBaseCost = 125
 const getCookCost = (level) => {
   return Math.max(cookBaseCost, Math.floor(1.5 * (level ** 3) + 1 + 1e-9))
@@ -204,21 +301,52 @@ const canAffordBankUnlock = computed(() => {
 const canAffordFactoryUnlock = computed(() => {
   return !hasFactoryUnlock.value && chickenCount.value >= factoryUnlockCost
 })
+const canAffordFarmUnlock = computed(() => {
+  return !hasFarmUnlock.value && chickenCount.value >= farmUnlockCost
+})
 const canOpenLeftMenu = computed(() => rebirthCount.value > 0 || hasBankUnlock.value)
 const bankEfficiencyPercent = ref(35)
 const bankCpsGeneration = computed(() => bankChickenStored.value * (bankEfficiencyPercent.value / 100) * 0.01)
-const factoryCpsGeneration = computed(() => factoryCount.value * 2 * rebirthMultiplier.value * factoryCpsUpgradeMultiplier.value)
+const factoryCpsGeneration = computed(() => factoryCount.value * 2 * rebirthMultiplier.value * factoryCpsUpgradeMultiplier.value * activePlantBonuses.value.cpsMultiplier)
 const nextPopupSpeedCost = computed(() => getOtherPopupSpeedUpgradeCost(popupSpeedOtherUpgradeLevel.value + 1))
 const canAffordPopupSpeedUpgrade = computed(() => chickenCount.value >= nextPopupSpeedCost.value)
 const nextCookCost = computed(() => getCookCost(cookCount.value + 1))
 const canAffordCook = computed(() => chickenCount.value >= nextCookCost.value)
-const cookOutputPerSecond = computed(() => cookCount.value * (1 + rebirthCount.value) * cookCpsUpgradeMultiplier.value)
+const cookOutputPerSecond = computed(() => cookCount.value * (1 + rebirthCount.value) * cookCpsUpgradeMultiplier.value * activePlantBonuses.value.cpsMultiplier)
 const currentPopupIntervalMs = computed(() => {
   return Math.max(1000, 5000 - popupSpeedOtherUpgradeLevel.value * 100)
 })
 const currentRarePopupChance = computed(() => {
   const bonus = rareChanceUpgradeBonuses.slice(0, rareChanceUpgradeLevel.value).reduce((total, value) => total + value, 0)
-  return Math.min(0.75, baseRarePopupChance + bonus)
+  const totalBonus = bonus + activePlantBonuses.value.rareChanceBonus
+  return Math.min(0.75, baseRarePopupChance + totalBonus)
+})
+const activePlantBonuses = computed(() => {
+  const bonuses = {
+    clickPowerBonus: 0,
+    cpsMultiplier: 1,
+    rareChanceBonus: 0,
+    popupSpeedBonus: 0
+  }
+  plants.value.forEach((plant) => {
+    const progress = getPlantProgress(plant)
+    if (progress.phase === 'dead') return
+
+    const seedDef = seedTypes.find(s => s.id === plant.seedTypeId)
+    if (!seedDef) return
+
+    const effectiveBonus = progress.effectiveBonus
+    if (seedDef.bonusType === 'clickPower') {
+      bonuses.clickPowerBonus += effectiveBonus
+    } else if (seedDef.bonusType === 'cpsMultiplier') {
+      bonuses.cpsMultiplier *= (1 + effectiveBonus)
+    } else if (seedDef.bonusType === 'rareChance') {
+      bonuses.rareChanceBonus += effectiveBonus
+    } else if (seedDef.bonusType === 'popupSpeed') {
+      bonuses.popupSpeedBonus += effectiveBonus
+    }
+  })
+  return bonuses
 })
 const activePopupMultiplier = computed(() => {
   if (activePopupTier.value === 'extremelyRare') {
@@ -911,6 +1039,17 @@ const unlockFactory = () => {
   syncRenderedChickens()
 }
 
+const unlockFarm = () => {
+  if (!canAffordFarmUnlock.value) {
+    return
+  }
+
+  totalChickenCount.value -= farmUnlockCost
+  hasFarmUnlock.value = true
+  shouldFlashLeftMenu.value = true
+  syncRenderedChickens()
+}
+
 const buyFactory = () => {
   const nextFactoryCost = getFactoryCost(factoryCount.value + 1)
   if (chickenCount.value < nextFactoryCost) {
@@ -990,6 +1129,8 @@ const createSavePayload = () => {
     factoryCpsUpgradeLevel: factoryCpsUpgradeLevel.value,
     bankDecayDelayUpgradeLevel: bankDecayDelayUpgradeLevel.value,
     rareChanceUpgradeLevel: rareChanceUpgradeLevel.value,
+    hasFarmUnlock: hasFarmUnlock.value,
+    plants: plants.value,
   }
 }
 
@@ -1161,6 +1302,18 @@ const applySavedProgress = (savedState) => {
 
   bankDecayDelayRemainingMs = bankDecayDelayMs.value
   shouldFlashRightMenu.value = shouldShowRightMenuAffordHint.value
+
+  hasFarmUnlock.value = Boolean(savedState.hasFarmUnlock)
+  if (Array.isArray(savedState.plants)) {
+    plants.value = savedState.plants.map(plant => ({
+      id: plant.id,
+      seedTypeId: plant.seedTypeId,
+      plantedAtMs: plant.plantedAtMs,
+      growthMs: plant.growthMs,
+      peakStartMs: plant.peakStartMs,
+      decayStartMs: plant.decayStartMs,
+    }))
+  }
 
   syncSoundPreference()
   enforceChickenCap()
@@ -1338,6 +1491,7 @@ const handleChickenClick = async (chicken, event) => {
     clickValue = 2
   }
   clickValue *= clickPowerMultiplier.value
+  clickValue += activePlantBonuses.value.clickPowerBonus
   manualChickenClicks.value += 1
 
   addChicken(clickValue)
@@ -1789,6 +1943,7 @@ watch(totalChickenCount, () => {
           <div class="save-text"><strong>Cooks:</strong> Cost {{ cookBaseCost }}-{{ getCookCost(5) }} each. Generate (1 + rebirth count) × efficiency chickens/s. Each cook adds +1% bank efficiency (max 90%).</div>
           <div class="save-text"><strong>Factory:</strong> Cost {{ factoryUnlockCost }}-{{ getFactoryCost(5) }} each. Generate 2 × rebirth multiplier × efficiency chickens/s.</div>
           <div class="save-text"><strong>Bank:</strong> Deposit chickens for passive income (CPS = stored × efficiency × 0.01). Decays 1%/min after delay. Unlocked as you progress.</div>
+          <div class="save-text"><strong>Farm:</strong> Plant seeds that take a while to grow. When fully grown, they grant temporary bonuses to click power, CPS, rare chance, or popup speed. Each plant peaks briefly then gradually decays. Remove plants anytime.</div>
           <div class="save-text"><strong>Rebirth:</strong> Reset progress to gain +0.5× multiplier + choose permanent upgrades. Unlocks as you progress. Left menu available after first rebirth.</div>
           <div class="save-text"><strong>Mobile:</strong> First tap to reveal upgrade details, second tap to buy. Sound mutes when app is backgrounded.</div>
         </div>
@@ -1874,6 +2029,15 @@ watch(totalChickenCount, () => {
         </button>
 
         <button
+          v-if="!hasFarmUnlock"
+          type="button"
+          class="upgrade-button"
+          :disabled="!canAffordFarmUnlock"
+          @click="unlockFarm"
+        >
+          Unlock Farm — Cost: {{ farmUnlockCost }}
+        </button>
+        <button
           type="button"
           class="upgrade-button"
           :disabled="!canAffordCook"
@@ -1888,6 +2052,15 @@ watch(totalChickenCount, () => {
           @click="toggleOtherUpgrades"
         >
           Other Upgrades
+        </button>
+
+        <button
+          v-if="hasFarmUnlock"
+          type="button"
+          class="upgrade-button"
+          @click="toggleFarm"
+        >
+          Farm
         </button>
 
         <label class="menu-label" for="chicken-cap-input">Rendered chicken cap</label>
@@ -1984,6 +2157,8 @@ watch(totalChickenCount, () => {
           </svg>
           Repository
         </button>
+
+        <a href="/android-pp.html" target="_blank" rel="noopener noreferrer" class="privacy-link">Privacy policy</a>
       </div>
     </div>
 
@@ -2159,6 +2334,27 @@ watch(totalChickenCount, () => {
           <input v-model="rainbowCycleEnabled" type="checkbox">
           <span>Rainbow Cycle</span>
         </label>
+      </div>
+
+      <div v-if="hasFarmUnlock" class="farm-section">
+        <div class="menu-title">Farm</div>
+        <div class="farm-grid">
+          <div v-for="plant in plants" :key="plant.id" class="farm-pot">
+            <div class="farm-seed-icon" :data-seed="plant.seedTypeId">
+              {{ seedTypes.find(s => s.id === plant.seedTypeId)?.name.charAt(0) || '🌱' }}
+            </div>
+            <div class="farm-progress-bar">
+              <div class="farm-progress-fill" :style="{ width: (getPlantProgress(plant).progress * 100) + '%' }"></div>
+            </div>
+            <div class="farm-bonus-text">{{ (getPlantProgress(plant).effectiveBonus * 100).toFixed(0) }}%</div>
+            <button type="button" class="farm-remove-btn" @click="removePlant(plant.id)">✕</button>
+          </div>
+          <div v-for="seed in seedTypes" :key="'btn-' + seed.id" class="farm-pot">
+            <button type="button" class="farm-plant-btn" @click="plants.push(createPlant(seed.id))">
+              🌱<br>{{ seed.name.split(' ')[0] }}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -2503,6 +2699,36 @@ watch(totalChickenCount, () => {
   width: 1rem;
   height: 1rem;
   fill: currentColor;
+}
+
+.privacy-link {
+  display: block;
+  margin-top: 0.35rem;
+  text-align: left;
+  font-size: 0.65rem;
+  color: #7d7d7d;
+  text-decoration: none;
+  cursor: default;
+  background: none !important;
+  box-shadow: none !important;
+  transition: color 0.15s ease;
+}
+
+.privacy-link:link,
+.privacy-link:visited {
+  color: #7d7d7d;
+  text-decoration: none;
+  background: none !important;
+  box-shadow: none !important;
+}
+
+.privacy-link:hover,
+.privacy-link:focus,
+.privacy-link:active {
+  color: #a0a0a0;
+  text-decoration: none;
+  background: none !important;
+  box-shadow: none !important;
 }
 
 .upgrade-button {
@@ -2997,4 +3223,109 @@ watch(totalChickenCount, () => {
 .flash-button-white {
   animation: menu-white-flash 1s ease-in-out infinite;
 }
+
+.farm-section {
+  border: 1px solid #2d3a2f;
+  background: rgba(12, 20, 15, 0.92);
+  border-radius: 0.8rem;
+  padding: 0.7rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.farm-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.35rem;
+}
+
+.farm-pot {
+  position: relative;
+  aspect-ratio: 1;
+  border: 1px solid #3a4a3a;
+  background: rgba(20, 30, 20, 0.85);
+  border-radius: 0.5rem;
+  padding: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.farm-pot--empty {
+  opacity: 0.5;
+}
+
+.farm-seed-icon {
+  font-size: 0.9rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 40%;
+  color: #7ce87c;
+}
+
+.farm-progress-bar {
+  width: 100%;
+  height: 0.3rem;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 0.15rem;
+  border: 1px solid rgba(120, 200, 120, 0.3);
+  overflow: hidden;
+}
+
+.farm-progress-fill {
+  height: 100%;
+  background: linear-gradient(to right, #4ade80, #22c55e);
+  border-radius: 0.15rem;
+  width: 0%;
+}
+
+.farm-bonus-text {
+  font-size: 0.55rem;
+  color: #7ce87c;
+  font-weight: 600;
+  text-align: center;
+}
+
+.farm-remove-btn {
+  border: none;
+  background: transparent;
+  color: #888888;
+  font-size: 0.6rem;
+  padding: 0;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.farm-remove-btn:hover {
+  color: #ff6b6b;
+}
+
+.farm-plant-btn {
+  border: 1px solid #3a4a3a;
+  background: rgba(20, 30, 20, 0.85);
+  color: #7ce87c;
+  border-radius: 0.4rem;
+  padding: 0.3rem;
+  font-size: 0.65rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex: 1;
+}
+
+.farm-plant-btn:hover {
+  border-color: #4a6a4a;
+  background: rgba(30, 40, 30, 0.92);
+  color: #a6e8a6;
+}
+
+.farm-plant-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 </style>
+
