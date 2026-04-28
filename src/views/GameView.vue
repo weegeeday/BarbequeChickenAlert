@@ -90,6 +90,7 @@ const bankDecayDelayUpgradeLevel = ref(0)
 const rareChanceUpgradeLevel = ref(0)
 const isFarmOpen = ref(false)
 const plants = ref([])
+const farmPlantLimitUpgradeLevel = ref(0)
 const hasFarmUnlock = ref(false)
 const iOSInteractiveTouchSelector = '.menu-panel, .left-menu-panel, .hud, .hud-left, .save-dialog, .save-overlay, button, input, label, a'
 
@@ -154,6 +155,8 @@ const getUpgradeCost = (level) => {
   return Math.max(1, Math.floor(1.5 * (level ** 3) + 1 + 1e-9))
 }
 
+const farmPlantLimitBase = 4
+
 const seedTypes = [
   { id: 'click-power', name: 'Click Speed', growthTimeMs: 120000, maxBonus: 0.25, bonusType: 'clickPower' },
   { id: 'cps-boost', name: 'CPS Boost', growthTimeMs: 180000, maxBonus: 0.3, bonusType: 'cpsMultiplier' },
@@ -162,6 +165,10 @@ const seedTypes = [
 ]
 
 const plantIdSeed = ref(0)
+
+const getFarmPlantLimitUpgradeCost = (level) => {
+  return Math.max(2500, Math.floor(2500 * (level ** 1.8) + 1))
+}
 
 const createPlant = (seedTypeId) => {
   const seed = seedTypes.find(s => s.id === seedTypeId)
@@ -174,6 +181,19 @@ const createPlant = (seedTypeId) => {
     peakStartMs: null,
     decayStartMs: null,
   }
+}
+
+const plantSeed = (seedTypeId) => {
+  if (!canPlantMore.value) {
+    return
+  }
+
+  const plant = createPlant(seedTypeId)
+  if (!plant) {
+    return
+  }
+
+  plants.value.push(plant)
 }
 
 const getPlantProgress = (plant) => {
@@ -304,6 +324,8 @@ const canAffordFactoryUnlock = computed(() => {
 const canAffordFarmUnlock = computed(() => {
   return !hasFarmUnlock.value && chickenCount.value >= farmUnlockCost
 })
+const farmPlantLimit = computed(() => farmPlantLimitBase + farmPlantLimitUpgradeLevel.value * 2)
+const canPlantMore = computed(() => plants.value.length < farmPlantLimit.value)
 const canOpenLeftMenu = computed(() => rebirthCount.value > 0 || hasBankUnlock.value)
 const bankEfficiencyPercent = ref(35)
 const bankCpsGeneration = computed(() => bankChickenStored.value * (bankEfficiencyPercent.value / 100) * 0.01)
@@ -390,6 +412,10 @@ const canAffordBankDelayUpgrade = computed(() => {
 const nextRareChanceUpgradeCost = computed(() => getRareChanceUpgradeCost(rareChanceUpgradeLevel.value + 1))
 const canAffordRareChanceUpgrade = computed(() => {
   return rareChanceUpgradeLevel.value < 3 && chickenCount.value >= nextRareChanceUpgradeCost.value
+})
+const nextFarmPlantLimitUpgradeCost = computed(() => getFarmPlantLimitUpgradeCost(farmPlantLimitUpgradeLevel.value + 1))
+const canAffordFarmPlantLimitUpgrade = computed(() => {
+  return chickenCount.value >= nextFarmPlantLimitUpgradeCost.value
 })
 const nextClickPowerUnlockThreshold = computed(() => {
   return clickUpgradeUnlockThresholds[clickPowerUpgradeLevel.value] ?? Number.MAX_SAFE_INTEGER
@@ -1050,6 +1076,16 @@ const unlockFarm = () => {
   syncRenderedChickens()
 }
 
+const upgradeFarmPlantLimit = () => {
+  if (!canAffordFarmPlantLimitUpgrade.value) {
+    return
+  }
+
+  totalChickenCount.value -= nextFarmPlantLimitUpgradeCost.value
+  farmPlantLimitUpgradeLevel.value += 1
+  syncRenderedChickens()
+}
+
 const buyFactory = () => {
   const nextFactoryCost = getFactoryCost(factoryCount.value + 1)
   if (chickenCount.value < nextFactoryCost) {
@@ -1129,6 +1165,7 @@ const createSavePayload = () => {
     factoryCpsUpgradeLevel: factoryCpsUpgradeLevel.value,
     bankDecayDelayUpgradeLevel: bankDecayDelayUpgradeLevel.value,
     rareChanceUpgradeLevel: rareChanceUpgradeLevel.value,
+    farmPlantLimitUpgradeLevel: farmPlantLimitUpgradeLevel.value,
     hasFarmUnlock: hasFarmUnlock.value,
     plants: plants.value,
   }
@@ -1292,6 +1329,7 @@ const applySavedProgress = (savedState) => {
   factoryCpsUpgradeLevel.value = normalizePositiveInteger(savedState.factoryCpsUpgradeLevel, 0, 0, 5)
   bankDecayDelayUpgradeLevel.value = normalizePositiveInteger(savedState.bankDecayDelayUpgradeLevel, 0, 0, 5)
   rareChanceUpgradeLevel.value = normalizePositiveInteger(savedState.rareChanceUpgradeLevel, 0, 0, 3)
+  farmPlantLimitUpgradeLevel.value = normalizePositiveInteger(savedState.farmPlantLimitUpgradeLevel, 0, 0, 20)
 
   // Restore bank efficiency percent if present, else default to 35 + cookCount (capped at 90)
   if (typeof savedState.bankEfficiencyPercent === 'number') {
@@ -1693,7 +1731,7 @@ const animateChickens = (timestamp) => {
         stableFpsDurationMs = Math.max(0, stableFpsDurationMs - frameMs * 2)
       }
 
-      if (stableFpsDurationMs >= 30000) {
+      if (stableFpsDurationMs >= 30000 && chickens.value.length < 30) {
         isPerformanceMode.value = false
         areCollisionsEnabled.value = true
         lowFpsDurationMs = 0
@@ -1899,6 +1937,7 @@ watch(
     factoryCpsUpgradeLevel,
     bankDecayDelayUpgradeLevel,
     rareChanceUpgradeLevel,
+    farmPlantLimitUpgradeLevel,
     totalCookProduced,
     totalFactoryProduced,
     totalBankDeposited,
@@ -1907,6 +1946,10 @@ watch(
     writeAutosave()
   },
 )
+
+watch(plants, () => {
+  writeAutosave()
+}, { deep: true })
 
 watch(totalChickenCount, () => {
   syncRenderedChickens()
@@ -2052,15 +2095,6 @@ watch(totalChickenCount, () => {
           @click="toggleOtherUpgrades"
         >
           Other Upgrades
-        </button>
-
-        <button
-          v-if="hasFarmUnlock"
-          type="button"
-          class="upgrade-button"
-          @click="toggleFarm"
-        >
-          Farm
         </button>
 
         <label class="menu-label" for="chicken-cap-input">Rendered chicken cap</label>
@@ -2268,6 +2302,23 @@ watch(totalChickenCount, () => {
               <div class="upgrade-card-desc">{{ nextRareChanceUpgradeCost }}</div>
             </div>
           </button>
+
+          <button
+            v-if="hasFarmUnlock"
+            type="button"
+            class="upgrade-card"
+            :class="{ 'upgrade-card--hovered': hoveredUpgradeId === 'farm-cap' }"
+            :disabled="!canAffordFarmPlantLimitUpgrade"
+            @click="handleUpgradeCardClick('farm-cap', upgradeFarmPlantLimit)"
+            @mouseenter="handleUpgradeCardMouseEnter('farm-cap')"
+            @mouseleave="handleUpgradeCardMouseLeave()"
+          >
+            <div class="upgrade-card-icon">[FRM]</div>
+            <div class="upgrade-card-details" v-if="hoveredUpgradeId === 'farm-cap'">
+              <div class="upgrade-card-title">Farm Slots</div>
+              <div class="upgrade-card-desc">{{ farmPlantLimit }} slots - {{ nextFarmPlantLimitUpgradeCost }}</div>
+            </div>
+          </button>
         </div>
 
         <div class="prompt-actions">
@@ -2338,6 +2389,7 @@ watch(totalChickenCount, () => {
 
       <div v-if="hasFarmUnlock" class="farm-section">
         <div class="menu-title">Farm</div>
+        <div class="menu-label">Slots: {{ plants.length }} / {{ farmPlantLimit }}</div>
         <div class="farm-grid">
           <div v-for="plant in plants" :key="plant.id" class="farm-pot">
             <div class="farm-seed-icon" :data-seed="plant.seedTypeId">
@@ -2350,7 +2402,7 @@ watch(totalChickenCount, () => {
             <button type="button" class="farm-remove-btn" @click="removePlant(plant.id)">✕</button>
           </div>
           <div v-for="seed in seedTypes" :key="'btn-' + seed.id" class="farm-pot">
-            <button type="button" class="farm-plant-btn" @click="plants.push(createPlant(seed.id))">
+            <button type="button" class="farm-plant-btn" :disabled="!canPlantMore" @click="plantSeed(seed.id)">
               🌱<br>{{ seed.name.split(' ')[0] }}
             </button>
           </div>
