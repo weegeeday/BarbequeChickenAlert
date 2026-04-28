@@ -27,6 +27,9 @@ const popupCycleKey = ref(0)
 const viewportWidth = ref(window.innerWidth)
 const viewportHeight = ref(window.innerHeight)
 const viewportScale = ref(window.visualViewport?.scale ?? 1)
+const topUiInset = ref(16)
+const safeAreaTopInset = ref(0)
+const isEdgeToEdgeScreen = ref(false)
 const chickens = ref([])
 const areCollisionsEnabled = ref(true)
 const isPerformanceMode = ref(false)
@@ -52,7 +55,7 @@ const hasFactoryUnlock = ref(false)
 const factoryCount = ref(0)
 const cookCount = ref(0)
 const isUnlimitedCap = ref(false)
-const chickenCap = ref(300)
+const chickenCap = ref(100)
 const fpsCounter = ref(0)
 const averageCps = ref(0)
 const totalChickenCount = ref(0)
@@ -95,9 +98,12 @@ const iOSInteractiveTouchSelector = '.menu-panel, .left-menu-panel, .hud, .hud-l
 
 let popupTimerId = null
 let animationFrameId = null
+let renderSyncFrameId = null
 let previousTimestamp = 0
 let chickenIdSeed = 0
+let floatingNumberIdSeed = 0
 let activeDragId = null
+let collisionFrameCounter = 0
 let lowFpsDurationMs = 0
 let stableFpsDurationMs = 0
 let smoothedFps = 60
@@ -108,10 +114,72 @@ let totalChickenEarned = 0
 let rainbowCycleHue = 0
 let bankDecayDelayRemainingMs = 60000
 let sessionStartTimestamp = performance.now()
+let collisionWorker = null
+let collisionWorkerPending = false
+let collisionWorkerRequestId = 0
 let touchStartHandler = null
 let gestureStartHandler = null
 let gestureChangeHandler = null
 let handleVisibilityChange = null
+
+const isMobileClient = () => {
+  const platform = window.Capacitor?.getPlatform?.()
+
+  if (platform === 'android' || platform === 'ios') {
+    return true
+  }
+
+  const coarsePointer = window.matchMedia?.('(pointer: coarse)')?.matches ?? false
+  return coarsePointer || /android|iphone|ipad|ipod|mobile/i.test(window.navigator.userAgent)
+}
+
+const uiScale = computed(() => {
+  const widthFactor = viewportWidth.value / 430
+  const heightFactor = viewportHeight.value / 820
+  const baseScale = Math.min(1, widthFactor, heightFactor)
+
+  return Math.max(0.82, baseScale)
+})
+
+const popupMaxWidth = computed(() => {
+  const touchWidthLimit = isTouchInputDevice.value ? 0.84 : 0.62
+  const widthLimit = viewportWidth.value * touchWidthLimit
+  const heightLimit = viewportHeight.value * 0.58
+  const absoluteCap = isTouchInputDevice.value ? 430 : 500
+
+  return Math.round(Math.max(180, Math.min(absoluteCap, widthLimit, heightLimit)))
+})
+
+const popupMaxHeight = computed(() => {
+  const heightLimit = isTouchInputDevice.value ? 0.40 : 0.48
+  return Math.round(Math.max(180, viewportHeight.value * heightLimit))
+})
+
+const popupBottomInset = computed(() => {
+  const baseInset = isTouchInputDevice.value ? 1.15 : 1
+  const shortScreenBoost = viewportHeight.value < 700 ? 0.9 : 0
+
+  return `${baseInset + shortScreenBoost}rem`
+})
+
+const measureSafeAreaTopInset = () => {
+  if (typeof document === 'undefined' || !document.body) {
+    return 0
+  }
+
+  const probe = document.createElement('div')
+  probe.style.position = 'fixed'
+  probe.style.top = '0'
+  probe.style.left = '0'
+  probe.style.visibility = 'hidden'
+  probe.style.pointerEvents = 'none'
+  probe.style.paddingTop = 'env(safe-area-inset-top)'
+  document.body.appendChild(probe)
+
+  const inset = Number.parseFloat(window.getComputedStyle(probe).paddingTop) || 0
+  document.body.removeChild(probe)
+  return inset
+}
 
 const popupAudio = new Audio(soundFile)
 const chickenAudio = new Audio(sound2File)
@@ -423,12 +491,38 @@ const shouldShowRightMenuAffordHint = computed(() => {
   return rebirthCount.value === 0 && upgradeLevel.value === 1 && canAffordUpgrade.value
 })
 const activePopupMultiplierLabel = computed(() => `${activePopupMultiplier.value}x`)
+const maxFloatingNumbers = computed(() => {
+  if (isPerformanceMode.value) {
+    return 8
+  }
+
+  return isTouchInputDevice.value ? 12 : 18
+})
+const floatingNumberLifetimeMs = computed(() => {
+  return isPerformanceMode.value ? 700 : 950
+})
+const adaptiveRenderCap = computed(() => {
+  const manualCap = normalizeCapValue(chickenCap.value)
+
+  if (!isTouchInputDevice.value) {
+    return manualCap
+  }
+
+  let touchCap = viewportHeight.value < 720 ? 70 : viewportHeight.value < 860 ? 95 : 120
+
+  if (isPerformanceMode.value) {
+    touchCap = Math.max(45, Math.floor(touchCap * 0.75))
+  }
+
+  return Math.min(manualCap, touchCap)
+})
+
 const effectiveRenderLimit = computed(() => {
-  if (isUnlimitedCap.value) {
+  if (isUnlimitedCap.value && !isTouchInputDevice.value) {
     return totalChickenCount.value
   }
 
-  return Math.min(totalChickenCount.value, normalizeCapValue(chickenCap.value))
+  return Math.min(totalChickenCount.value, adaptiveRenderCap.value)
 })
 
 const randomBetween = (minimum, maximum) => {
@@ -450,7 +544,7 @@ const getChickenSize = () => {
 }
 
 const normalizeCapValue = (value) => {
-  const safeValue = Number.isFinite(value) ? value : 300
+  const safeValue = Number.isFinite(value) ? value : 100
   return Math.max(25, Math.min(2000, Math.round(safeValue)))
 }
 
@@ -468,6 +562,85 @@ const clampPosition = (chicken) => {
   const maxY = Math.max(0, viewportHeight.value - chicken.size)
   chicken.x = Math.max(0, Math.min(chicken.x, maxX))
   chicken.y = Math.max(0, Math.min(chicken.y, maxY))
+}
+
+const createCollisionWorkerSnapshot = () => {
+  return chickens.value.map((chicken) => ({
+    id: chicken.id,
+    x: chicken.x,
+    y: chicken.y,
+    size: chicken.size,
+    velocityX: chicken.velocityX,
+    velocityY: chicken.velocityY,
+    angularVelocity: chicken.angularVelocity,
+    isDragging: chicken.isDragging,
+  }))
+}
+
+const applyCollisionWorkerDeltas = (deltas) => {
+  if (!Array.isArray(deltas) || deltas.length === 0) {
+    return
+  }
+
+  deltas.forEach((delta) => {
+    const chicken = findChickenById(delta.id)
+    if (!chicken) {
+      return
+    }
+
+    chicken.x += delta.deltaX || 0
+    chicken.y += delta.deltaY || 0
+    chicken.velocityX += delta.deltaVelocityX || 0
+    chicken.velocityY += delta.deltaVelocityY || 0
+    chicken.angularVelocity += delta.deltaAngularVelocity || 0
+
+    clampPosition(chicken)
+  })
+}
+
+const initializeCollisionWorker = () => {
+  if (typeof Worker === 'undefined') {
+    return null
+  }
+
+  try {
+    const worker = new Worker(new URL('../workers/chickenCollisionWorker.js', import.meta.url), { type: 'module' })
+
+    worker.onmessage = (event) => {
+      const { requestId, deltas } = event.data || {}
+
+      if (typeof requestId !== 'number' || requestId !== collisionWorkerRequestId) {
+        return
+      }
+
+      collisionWorkerPending = false
+      applyCollisionWorkerDeltas(deltas)
+    }
+
+    worker.onerror = () => {
+      collisionWorkerPending = false
+    }
+
+    return worker
+  } catch {
+    return null
+  }
+}
+
+const requestCollisionWorkerStep = () => {
+  if (!collisionWorker || collisionWorkerPending) {
+    return false
+  }
+
+  collisionWorkerPending = true
+  collisionWorkerRequestId += 1
+
+  collisionWorker.postMessage({
+    requestId: collisionWorkerRequestId,
+    chickens: createCollisionWorkerSnapshot(),
+  })
+
+  return true
 }
 
 const playPopupAudio = async () => {
@@ -515,6 +688,17 @@ const updateViewport = () => {
   viewportWidth.value = Math.round(visualViewport?.width ?? window.innerWidth)
   viewportHeight.value = Math.round(visualViewport?.height ?? window.innerHeight)
   viewportScale.value = visualViewport?.scale ?? window.devicePixelRatio ?? 1
+
+  safeAreaTopInset.value = measureSafeAreaTopInset()
+  isEdgeToEdgeScreen.value = safeAreaTopInset.value > 0
+
+  const touchBaseInset = isEdgeToEdgeScreen.value
+    ? Math.max(10, viewportHeight.value * 0.016)
+    : Math.max(4, viewportHeight.value * 0.006)
+
+  topUiInset.value = isTouchInputDevice.value
+    ? Math.round(touchBaseInset)
+    : 16
   chickens.value.forEach((chicken) => {
     clampPosition(chicken)
   })
@@ -649,6 +833,17 @@ const syncRenderedChickens = () => {
   }
 }
 
+const scheduleRenderedChickenSync = () => {
+  if (renderSyncFrameId !== null) {
+    return
+  }
+
+  renderSyncFrameId = window.requestAnimationFrame(() => {
+    renderSyncFrameId = null
+    syncRenderedChickens()
+  })
+}
+
 const addChicken = (amount) => {
   if (amount <= 0) {
     return
@@ -656,7 +851,7 @@ const addChicken = (amount) => {
 
   totalChickenCount.value += amount
   totalChickenEarned += amount
-  syncRenderedChickens()
+  scheduleRenderedChickenSync()
 }
 
 const handlePopupClick = () => {
@@ -1496,20 +1691,25 @@ const handleChickenClick = async (chicken, event) => {
 
   addChicken(clickValue)
 
-  // Create floating number
-  const floatingId = Math.random()
+  const floatingId = ++floatingNumberIdSeed
   const floatingNumber = {
     id: floatingId,
     value: clickValue,
     x: event.clientX,
     y: event.clientY,
   }
-  floatingNumbers.value.push(floatingNumber)
 
-  // Remove after animation
+  floatingNumbers.value.push(floatingNumber)
+  if (floatingNumbers.value.length > maxFloatingNumbers.value) {
+    floatingNumbers.value.shift()
+  }
+
   window.setTimeout(() => {
-    floatingNumbers.value = floatingNumbers.value.filter(n => n.id !== floatingId)
-  }, 1000)
+    const index = floatingNumbers.value.findIndex((n) => n.id === floatingId)
+    if (index !== -1) {
+      floatingNumbers.value.splice(index, 1)
+    }
+  }, floatingNumberLifetimeMs.value)
 }
 
 const resolveChickenCollisions = () => {
@@ -1746,7 +1946,14 @@ const animateChickens = (timestamp) => {
   })
 
   if (areCollisionsEnabled.value) {
-    resolveChickenCollisions()
+    const collisionStep = isPerformanceMode.value ? 3 : (isTouchInputDevice.value ? 2 : 1)
+    collisionFrameCounter = (collisionFrameCounter + 1) % collisionStep
+
+    if (collisionFrameCounter === 0) {
+      if (!requestCollisionWorkerStep()) {
+        resolveChickenCollisions()
+      }
+    }
   }
 
   animationFrameId = window.requestAnimationFrame(animateChickens)
@@ -1769,14 +1976,24 @@ onMounted(() => {
   bankDecayDelayRemainingMs = bankDecayDelayMs.value
   shouldFlashRightMenu.value = shouldShowRightMenuAffordHint.value
   syncRenderedChickens()
+  collisionWorker = initializeCollisionWorker()
 
   try {
     const serializedSave = window.localStorage.getItem(saveStorageKey)
     if (serializedSave) {
       const parsedSave = JSON.parse(serializedSave)
       if (parsedSave && typeof parsedSave === 'object') {
-        pendingSavedState.value = parsedSave
-        showSavePrompt.value = true
+        if (isMobileClient()) {
+          applySavedProgress(parsedSave)
+          sessionSavingEnabled.value = true
+          autosaveStatus.value = 'Autosave: On'
+          pendingSavedState.value = null
+          showSavePrompt.value = false
+          writeAutosave()
+        } else {
+          pendingSavedState.value = parsedSave
+          showSavePrompt.value = true
+        }
       }
     }
   } catch {
@@ -1847,6 +2064,15 @@ onUnmounted(() => {
   if (animationFrameId !== null) {
     window.cancelAnimationFrame(animationFrameId)
   }
+  if (renderSyncFrameId !== null) {
+    window.cancelAnimationFrame(renderSyncFrameId)
+  }
+
+  if (collisionWorker) {
+    collisionWorker.terminate()
+    collisionWorker = null
+    collisionWorkerPending = false
+  }
 
   window.removeEventListener('resize', updateViewport)
   window.removeEventListener('pointermove', handlePointerMove)
@@ -1909,12 +2135,23 @@ watch(
 )
 
 watch(totalChickenCount, () => {
-  syncRenderedChickens()
+  scheduleRenderedChickenSync()
 })
 </script>
 
 <template>
-  <div class="black-screen" style="touch-action: none; user-select: none;">
+  <div
+    class="black-screen"
+    :style="{
+      touchAction: 'none',
+      userSelect: 'none',
+      '--ui-top-offset': `${topUiInset}px`,
+      '--ui-scale': uiScale,
+      '--popup-max-width': `${popupMaxWidth}px`,
+      '--popup-max-height': `${popupMaxHeight}px`,
+      '--popup-bottom-offset': popupBottomInset,
+    }"
+  >
     <div class="hud-left">
       <button
         :class="['menu-button', { 'flash-button': shouldFlashLeftMenu, 'menu-button--locked': !canOpenLeftMenu }]"
@@ -2474,21 +2711,25 @@ watch(totalChickenCount, () => {
   width: 100%;
   overflow: hidden;
   background: #000;
+  --ui-scale: 1;
+  --popup-max-width: 480px;
+  --popup-max-height: 320px;
+  --popup-bottom-offset: 1rem;
 }
 
 .hud {
   position: fixed;
-  top: 1rem;
+  top: calc(var(--ui-top-offset, 1rem) + env(safe-area-inset-top, 0px));
   right: 1rem;
   z-index: 50;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: calc(0.5rem * var(--ui-scale));
 }
 
 .hud-left {
   position: fixed;
-  top: 1rem;
+  top: calc(var(--ui-top-offset, 1rem) + env(safe-area-inset-top, 0px));
   left: 1rem;
   z-index: 50;
   display: flex;
@@ -2498,7 +2739,7 @@ watch(totalChickenCount, () => {
 
 .fps-hud {
   position: fixed;
-  top: 1rem;
+  top: calc(var(--ui-top-offset, 1rem) + env(safe-area-inset-top, 0px));
   left: 1rem;
   z-index: 50;
   border: 1px solid #2c2c2c;
@@ -2515,8 +2756,8 @@ watch(totalChickenCount, () => {
   background: rgba(15, 15, 15, 0.92);
   color: #f1f1f1;
   border-radius: 999px;
-  padding: 0.35rem 0.75rem;
-  font-size: 0.9rem;
+  padding: calc(0.35rem * var(--ui-scale)) calc(0.75rem * var(--ui-scale));
+  font-size: calc(0.9rem * var(--ui-scale));
 }
 
 .menu-button {
@@ -2535,14 +2776,14 @@ watch(totalChickenCount, () => {
 
 .menu-panel {
   position: fixed;
-  top: 3.8rem;
+  top: calc(var(--ui-top-offset, 1rem) + env(safe-area-inset-top, 0px) + 2.8rem);
   right: 1rem;
   z-index: 90;
-  width: min(320px, 88vw);
+  width: min(calc(320px * var(--ui-scale)), 88vw);
   border: 1px solid #2c2c2c;
   background: rgba(15, 15, 15, 0.96);
   border-radius: 0.9rem;
-  padding: 0.75rem;
+  padding: calc(0.75rem * var(--ui-scale));
   display: grid;
   gap: 0.55rem;
   max-height: 65vh;
@@ -2558,14 +2799,14 @@ watch(totalChickenCount, () => {
 
 .left-menu-panel {
   position: fixed;
-  top: 7rem;
+  top: calc(var(--ui-top-offset, 1rem) + env(safe-area-inset-top, 0px) + 6rem);
   left: 1rem;
   z-index: 65;
-  width: min(320px, 88vw);
+  width: min(calc(320px * var(--ui-scale)), 88vw);
   border: 1px solid #2c2c2c;
   background: rgba(15, 15, 15, 0.96);
   border-radius: 0.9rem;
-  padding: 0.75rem;
+  padding: calc(0.75rem * var(--ui-scale));
   display: grid;
   gap: 0.55rem;
   max-height: 65vh;
@@ -2880,7 +3121,7 @@ watch(totalChickenCount, () => {
 
 .performance-notice {
   position: fixed;
-  top: 3.75rem;
+  top: calc(var(--ui-top-offset, 1rem) + env(safe-area-inset-top, 0px) + 2.75rem);
   right: 1rem;
   z-index: 50;
   border: 1px solid #634400;
@@ -2893,7 +3134,7 @@ watch(totalChickenCount, () => {
 
 .save-status {
   position: fixed;
-  top: 3.75rem;
+  top: calc(var(--ui-top-offset, 1rem) + env(safe-area-inset-top, 0px) + 2.75rem);
   left: 1rem;
   z-index: 50;
   border: 1px solid #2c2c2c;
@@ -2939,6 +3180,8 @@ watch(totalChickenCount, () => {
   display: grid;
   gap: 0.6rem;
   pointer-events: auto;
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
 }
 
 .help-dialog {
@@ -3045,10 +3288,12 @@ watch(totalChickenCount, () => {
   position: fixed;
   z-index: 40;
   right: clamp(1rem, 3vw, 2rem);
-  bottom: clamp(1rem, 3vw, 2rem);
-  width: clamp(220px, 23vw, 480px);
-  max-width: 30vw;
+  bottom: calc(var(--popup-bottom-offset) + env(safe-area-inset-bottom, 0px));
+  width: min(var(--popup-max-width), 86vw);
+  max-width: var(--popup-max-width);
+  max-height: var(--popup-max-height);
   height: auto;
+  object-fit: contain;
   cursor: pointer;
   animation: popup-in 220ms ease-out;
 }
@@ -3093,8 +3338,9 @@ watch(totalChickenCount, () => {
     left: 50%;
     right: auto;
     transform: translateX(-50%);
-    width: clamp(180px, 72vw, 420px);
-    max-width: 86vw;
+    width: min(var(--popup-max-width), 88vw);
+    max-width: 88vw;
+    max-height: min(var(--popup-max-height), 36vh);
   }
 
   .rare-popup-label {
@@ -3104,38 +3350,40 @@ watch(totalChickenCount, () => {
   }
 
   .hud {
-    top: 0.75rem;
+    top: calc(var(--ui-top-offset, 0.75rem) + env(safe-area-inset-top, 0px));
     right: 0.75rem;
   }
 
   .hud-left {
-    top: 0.75rem;
+    top: calc(var(--ui-top-offset, 0.75rem) + env(safe-area-inset-top, 0px));
     left: 0.75rem;
   }
 
   .fps-hud {
-    top: 0.75rem;
+    top: calc(var(--ui-top-offset, 0.75rem) + env(safe-area-inset-top, 0px));
     left: 0.75rem;
   }
 
   .menu-panel {
-    top: 3.45rem;
+    top: calc(var(--ui-top-offset, 0.75rem) + env(safe-area-inset-top, 0px) + 2.7rem);
     right: 0.75rem;
+    width: min(calc(320px * var(--ui-scale)), 90vw);
   }
 
   .left-menu-panel {
-    top: 3.45rem;
+    top: calc(var(--ui-top-offset, 0.75rem) + env(safe-area-inset-top, 0px) + 2.7rem);
     left: 0.75rem;
+    width: min(calc(320px * var(--ui-scale)), 90vw);
   }
 
   .performance-notice {
-    top: 3.4rem;
+    top: calc(var(--ui-top-offset, 0.75rem) + env(safe-area-inset-top, 0px) + 2.65rem);
     right: 0.75rem;
     max-width: 70vw;
   }
 
   .save-status {
-    top: 3.4rem;
+    top: calc(var(--ui-top-offset, 0.75rem) + env(safe-area-inset-top, 0px) + 2.65rem);
     left: 0.75rem;
   }
 
