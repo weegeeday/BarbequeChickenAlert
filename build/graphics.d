@@ -1,6 +1,6 @@
 graphics.o: \
- C:/Users/simon/BBQChickenAlert-NDS/BarbequeChickenAlert/source/graphics.cpp \
- C:/Users/simon/BBQChickenAlert-NDS/BarbequeChickenAlert/source/graphics.h \
+ C:/Users/simon/Downloads/BarbequeChickenAlert/source/graphics.cpp \
+ C:/Users/simon/Downloads/BarbequeChickenAlert/source/graphics.h \
  C:/devkitPro/libnds/include/nds.h C:/devkitPro/calico/include/calico.h \
  C:/devkitPro/calico/include/calico/types.h \
  C:/devkitPro/calico/include/calico/arm/psr.h \
@@ -113,11 +113,11 @@ graphics.o: \
  C:/devkitPro/libnds/include/nds/arm9/trig_lut.h \
  C:/devkitPro/libnds/include/nds/arm9/video.h \
  C:/devkitPro/libnds/include/nds/arm9/videoGL.h \
- C:/Users/simon/BBQChickenAlert-NDS/BarbequeChickenAlert/source/game_state.h \
- C:/Users/simon/BBQChickenAlert-NDS/BarbequeChickenAlert/source/gfx_assets.h \
- C:/Users/simon/BBQChickenAlert-NDS/BarbequeChickenAlert/source/save.h \
- C:/Users/simon/BBQChickenAlert-NDS/BarbequeChickenAlert/source/lang.h
-C:/Users/simon/BBQChickenAlert-NDS/BarbequeChickenAlert/source/graphics.h:
+ C:/Users/simon/Downloads/BarbequeChickenAlert/source/game_state.h \
+ C:/Users/simon/Downloads/BarbequeChickenAlert/source/gfx_assets.h \
+ C:/Users/simon/Downloads/BarbequeChickenAlert/source/save.h \
+ C:/Users/simon/Downloads/BarbequeChickenAlert/source/lang.h
+C:/Users/simon/Downloads/BarbequeChickenAlert/source/graphics.h:
 C:/devkitPro/libnds/include/nds.h:
 C:/devkitPro/calico/include/calico.h:
 C:/devkitPro/calico/include/calico/types.h:
@@ -231,7 +231,7 @@ C:/devkitPro/libnds/include/nds/arm9/sprite.h:
 C:/devkitPro/libnds/include/nds/arm9/trig_lut.h:
 C:/devkitPro/libnds/include/nds/arm9/video.h:
 C:/devkitPro/libnds/include/nds/arm9/videoGL.h:
-C:/Users/simon/BBQChickenAlert-NDS/BarbequeChickenAlert/source/game_state.h:
-C:/Users/simon/BBQChickenAlert-NDS/BarbequeChickenAlert/source/gfx_assets.h:
-C:/Users/simon/BBQChickenAlert-NDS/BarbequeChickenAlert/source/save.h:
-C:/Users/simon/BBQChickenAlert-NDS/BarbequeChickenAlert/source/lang.h:
+C:/Users/simon/Downloads/BarbequeChickenAlert/source/game_state.h:
+C:/Users/simon/Downloads/BarbequeChickenAlert/source/gfx_assets.h:
+C:/Users/simon/Downloads/BarbequeChickenAlert/source/save.h:
+C:/Users/simon/Downloads/BarbequeChickenAlert/source/lang.h:

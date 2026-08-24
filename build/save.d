@@ -1,6 +1,5 @@
-save.o: \
- C:/Users/simon/BBQChickenAlert-NDS/BarbequeChickenAlert/source/save.cpp \
- C:/Users/simon/BBQChickenAlert-NDS/BarbequeChickenAlert/source/save.h \
+save.o: C:/Users/simon/Downloads/BarbequeChickenAlert/source/save.cpp \
+ C:/Users/simon/Downloads/BarbequeChickenAlert/source/save.h \
  C:/devkitPro/libnds/include/nds.h C:/devkitPro/calico/include/calico.h \
  C:/devkitPro/calico/include/calico/types.h \
  C:/devkitPro/calico/include/calico/arm/psr.h \
@@ -113,9 +112,9 @@ save.o: \
  C:/devkitPro/libnds/include/nds/arm9/trig_lut.h \
  C:/devkitPro/libnds/include/nds/arm9/video.h \
  C:/devkitPro/libnds/include/nds/arm9/videoGL.h \
- C:/Users/simon/BBQChickenAlert-NDS/BarbequeChickenAlert/source/game_state.h \
+ C:/Users/simon/Downloads/BarbequeChickenAlert/source/game_state.h \
  C:/devkitPro/libnds/include/fat.h C:/devkitPro/libnds/include/dvm.h
-C:/Users/simon/BBQChickenAlert-NDS/BarbequeChickenAlert/source/save.h:
+C:/Users/simon/Downloads/BarbequeChickenAlert/source/save.h:
 C:/devkitPro/libnds/include/nds.h:
 C:/devkitPro/calico/include/calico.h:
 C:/devkitPro/calico/include/calico/types.h:
@@ -229,6 +228,6 @@ C:/devkitPro/libnds/include/nds/arm9/sprite.h:
 C:/devkitPro/libnds/include/nds/arm9/trig_lut.h:
 C:/devkitPro/libnds/include/nds/arm9/video.h:
 C:/devkitPro/libnds/include/nds/arm9/videoGL.h:
-C:/Users/simon/BBQChickenAlert-NDS/BarbequeChickenAlert/source/game_state.h:
+C:/Users/simon/Downloads/BarbequeChickenAlert/source/game_state.h:
 C:/devkitPro/libnds/include/fat.h:
 C:/devkitPro/libnds/include/dvm.h:
