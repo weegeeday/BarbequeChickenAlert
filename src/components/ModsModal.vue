@@ -249,6 +249,11 @@ const handleReloadGame = () => {
           </div>
         </div>
       </div>
+
+      <!-- Developer Docs Footer -->
+      <div class="dev-docs-footer">
+        Looking to create a mod? Read the <a href="https://github.com/weegeeday/BarbequeChickenAlert/blob/main/modding/MOD_DEVELOPMENT_GUIDE.md" target="_blank" rel="noopener noreferrer" class="dev-docs-link">Mod Development Guide</a>.
+      </div>
     </div>
   </div>
 </template>
@@ -667,5 +672,23 @@ const handleReloadGame = () => {
   background: #dc2626;
   color: #ffffff;
   border-color: #dc2626;
+}
+
+.dev-docs-footer {
+  text-align: center;
+  font-size: 0.78rem;
+  color: #64748b;
+  margin-top: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #2e3340;
+}
+
+.dev-docs-link {
+  color: #60a5fa;
+  text-decoration: underline;
+  font-weight: 500;
+}
+.dev-docs-link:hover {
+  color: #93c5fd;
 }
 </style>
