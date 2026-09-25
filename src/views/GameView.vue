@@ -4,6 +4,11 @@ import popupImage from '../assets/BCA.svg'
 import soundFile from '../assets/sound.mp3'
 import sound2File from '../assets/sound2.mp3'
 import sound3File from '../assets/sound3.mp3'
+import modApi from '../services/modApi.js'
+import modManager from '../services/modManager.js'
+import ModsModal from '../components/ModsModal.vue'
+
+const isModsModalOpen = ref(false)
 
 const chickenImageModules = import.meta.glob('../assets/chicken/**/*.{png,jpg,jpeg,webp,avif,gif}', {
   eager: true,
@@ -637,7 +642,10 @@ const createChicken = () => {
   }
 
   const selectedTypeObj = imageTypes[Math.floor(Math.random() * imageTypes.length)]
-  const selectedImage = selectedTypeObj.images[Math.floor(Math.random() * selectedTypeObj.images.length)]
+  let selectedImage = selectedTypeObj.images[Math.floor(Math.random() * selectedTypeObj.images.length)]
+  if (modApi.customChickenImages && modApi.customChickenImages.length > 0) {
+    selectedImage = modApi.customChickenImages[Math.floor(Math.random() * modApi.customChickenImages.length)]
+  }
 
   return {
     id: ++chickenIdSeed,
@@ -1641,6 +1649,8 @@ const animateChickens = (timestamp) => {
   smoothedFps = smoothedFps * 0.9 + instantaneousFps * 0.1
   fpsCounter.value = Math.round(smoothedFps)
 
+  modApi.trigger('tick', { deltaMs: frameMs, deltaSeconds, timestamp })
+
   if (rainbowCycleEnabled.value) {
     rainbowCycleHue = (rainbowCycleHue + 60 * deltaSeconds) % 360
     chickenHueShift.value = Math.round(rainbowCycleHue)
@@ -1865,11 +1875,26 @@ onMounted(() => {
   document.addEventListener('gesturestart', gestureStartHandler, { passive: false })
   document.addEventListener('gesturechange', gestureChangeHandler, { passive: false })
 
-  // Track document visibility to avoid blocking background music
-  handleVisibilityChange = () => {
-    isDocumentVisible.value = !document.hidden
-  }
-  document.addEventListener('visibilitychange', handleVisibilityChange)
+  // Bind Mod API context & apply active mods
+  modApi.bindGameContext({
+    totalChickenCount,
+    averageCps,
+    rebirthCount,
+    upgradeLevel,
+    chickensPerPopup,
+    isSoundEnabled,
+    chickens,
+    chickenCap,
+    bankChickenStored,
+    cookCount,
+    factoryCount,
+    addChickens: (amt) => {
+      totalChickenCount.value += amt
+      if (amt > 0) totalChickenEarned += amt
+      syncRenderedChickens()
+    },
+  })
+  modManager.applyActiveMods()
 
   animationFrameId = window.requestAnimationFrame(animateChickens)
 })
@@ -1969,6 +1994,8 @@ watch(totalChickenCount, () => {
     </div>
 
     <div class="hud">
+      <button class="menu-button mods-button" type="button" aria-label="Open mods" title="Mod Manager" @click="isModsModalOpen = true">Mods</button>
+      <button v-for="btn in modApi.getHUDButtons()" :key="btn.id" class="menu-button" type="button" @click="btn.onClick">{{ btn.icon || '' }} {{ btn.label }}</button>
       <button :class="['menu-button', { 'flash-button-white': shouldFlashRightMenu }]" type="button" aria-label="Open menu" @click="toggleMenu">☰</button>
       <button class="menu-button help-button" type="button" aria-label="Open help" @click="openHelp">?</button>
       <div class="counter">Chicken: {{ chickenCount }}</div>
@@ -2008,6 +2035,30 @@ watch(totalChickenCount, () => {
 
     <div v-if="isMenuOpen" class="menu-panel">
       <div class="menu-title">Upgrades</div>
+      <button
+        type="button"
+        class="upgrade-button"
+        style="background: #1e293b; border-color: #3b82f6; font-weight: 700; margin-bottom: 0.5rem;"
+        @click="isModsModalOpen = true"
+      >
+        Mod Manager ({{ modManager.installedMods.length }} installed)
+      </button>
+
+      <!-- Custom Mod Upgrades -->
+      <div v-if="modApi.getCustomUpgrades().length > 0" style="margin-bottom: 0.75rem;">
+        <div class="menu-label">Mod Upgrades</div>
+        <button
+          v-for="upgrade in modApi.getCustomUpgrades()"
+          :key="upgrade.id"
+          type="button"
+          class="upgrade-button"
+          :disabled="chickenCount < upgrade.cost || upgrade.level >= upgrade.maxLevel"
+          @click="modApi.buyCustomUpgrade(upgrade.id)"
+        >
+          {{ upgrade.icon }} {{ upgrade.name }} (Lvl {{ upgrade.level }}) — Cost: {{ upgrade.cost }}
+        </button>
+      </div>
+
       <div class="menu-label">Current level: {{ upgradeLevel }}</div>
       <div class="menu-label">Rare shown: {{ rarePopupShownCount }} | Rare chance: {{ (currentRarePopupChance * 100).toFixed(2) }}%</div>
 
@@ -2516,6 +2567,9 @@ watch(totalChickenCount, () => {
     >
       +{{ floatingNum.value }}
     </div>
+
+    <div id="mod-container"></div>
+    <ModsModal :is-open="isModsModalOpen" @close="isModsModalOpen = false" />
   </div>
 </template>
 

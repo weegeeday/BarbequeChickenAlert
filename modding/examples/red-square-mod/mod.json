@@ -1,0 +1,12 @@
+{
+  "id": "red-square-mod",
+  "title": "Red Square Mod",
+  "version": "1.0.0",
+  "author": "Weegeeday",
+  "description": "Replaces all chicken graphics with a red square.",
+  "image": "https://img.magnific.com/premium-photo/red-square-background-simple-design-backdrop-banners-posters-various-design-works_7954-54551.jpg",
+  "js": ["mod.js"],
+  "css": [],
+  "html": [],
+  "externalLibraries": []
+}
